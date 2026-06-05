@@ -6,16 +6,19 @@
   "scripts": {
     "build:ts": "tsc",
     "build:cpp": "cmake -B build -S . && cmake --build build",
+    "build:addon": "cmake-js compile -T codegraph_addon -B build",
     "build": "npm run build:ts && npm run build:cpp",
     "start": "node dist/index.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "mcp": "node dist/mcp_server.js"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^0.6.0"
+    "@modelcontextprotocol/sdk": "^0.6.0",
+    "node-addon-api": "^8.0.0"
   },
   "devDependencies": {
     "typescript": "^5.0.0",
-    "node-addon-api": "^7.0.0",
+    "cmake-js": "^7.3.0",
     "@types/node": "^20.0.0"
   }
 }

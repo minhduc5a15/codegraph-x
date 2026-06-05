@@ -73,4 +73,17 @@ public:
     }
 
     inline bool frozen() const { return is_frozen; }
+
+    // Raw data access for Node-API Zero-copy
+    void* get_nodes_data() { return nodes.data(); }
+    size_t get_nodes_bytes() const { return nodes.size() * sizeof(NodeRecord); }
+
+    void* get_offsets_data() { return offsets.data(); }
+    size_t get_offsets_bytes() const { return offsets.size() * sizeof(uint32_t); }
+
+    void* get_edges_data() { return edges.data(); }
+    size_t get_edges_bytes() const { return edges.size() * sizeof(EdgeRecord); }
+
+    void* get_string_pool_data() { return string_pool.data(); }
+    size_t get_string_pool_bytes() const { return string_pool.size() * sizeof(char); }
 };
