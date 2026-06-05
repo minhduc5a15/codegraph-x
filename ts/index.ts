@@ -1,9 +1,11 @@
-import { McpServer } from "./mcp_server.js";
+import { Codegraph, GraphData } from './Codegraph.js';
 
-async function main() {
-    console.log("Codegraph-X CLI Initialized.");
-    const server = new McpServer();
-    await server.run();
+export * from './Codegraph.js';
+
+// @ts-ignore
+const addon = require('../build/codegraph_addon.node');
+
+export function analyzeWorkspace(files: string[]): Codegraph {
+    const rawData: GraphData = addon.ParseWorkspace(files);
+    return new Codegraph(rawData);
 }
-
-main().catch(console.error);

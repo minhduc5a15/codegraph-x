@@ -17,8 +17,8 @@ public:
 
     void execute(const std::vector<std::string>& files_to_parse);
 
-    const std::vector<NodeRecord>& get_nodes() const { return global_nodes; }
-    const std::vector<RawEdge>& get_edges() const { return global_edges; }
+    std::vector<NodeRecord> take_nodes() { return std::move(global_nodes); }
+    std::vector<RawEdge> take_edges() { return std::move(global_edges); }
 
 private:
     void worker_thread_func();
