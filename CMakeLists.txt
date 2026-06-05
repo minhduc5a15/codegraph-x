@@ -11,6 +11,9 @@ else ()
     add_compile_options(-O3 -march=native)
 endif ()
 
+# Thread support
+find_package(Threads REQUIRED)
+
 # --- Vendored Tree-Sitter ---
 
 # Tree-Sitter core (Amalgamated build)
@@ -33,9 +36,10 @@ add_executable(codegraph-x
     src/main.cpp 
     src/InMemoryGraphEngine.cpp 
     src/parser.cpp
+    src/parallel_parser.cpp
 )
 target_include_directories(codegraph-x PRIVATE src)
-target_link_libraries(codegraph-x PRIVATE tree-sitter tree-sitter-cpp)
+target_link_libraries(codegraph-x PRIVATE tree-sitter tree-sitter-cpp Threads::Threads)
 
 # Benchmark executable
 find_package(benchmark REQUIRED)
@@ -44,4 +48,4 @@ add_executable(graph_engine_benchmark
     src/InMemoryGraphEngine.cpp
 )
 target_include_directories(graph_engine_benchmark PRIVATE src)
-target_link_libraries(graph_engine_benchmark PRIVATE benchmark::benchmark)
+target_link_libraries(graph_engine_benchmark PRIVATE benchmark::benchmark Threads::Threads)
