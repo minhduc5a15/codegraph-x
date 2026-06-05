@@ -1,8 +1,8 @@
 #include <iostream>
-#include "graph_engine.hpp"
+#include "InMemoryGraphEngine.hpp"
 
 int main() {
     std::cout << "Codegraph-X Native CLI Initialized." << std::endl;
-    GraphEngine engine;
+    InMemoryGraphEngine engine;
     return 0;
 }
