@@ -1,11 +1,3 @@
-#ifndef PARSER_HPP
-#define PARSER_HPP
+#pragma once
 
-// Wrapper for Tree-sitter C-API
-class Parser {
-public:
-    Parser();
-    ~Parser();
-};
-
-#endif // PARSER_HPP
+void test_parser_linkage();
