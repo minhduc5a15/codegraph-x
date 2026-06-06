@@ -3,9 +3,13 @@
   "version": "1.0.0",
   "description": "A high-performance code graph analysis tool using C++ and Tree-sitter.",
   "main": "dist/index.js",
+  "types": "dist/index.d.ts",
   "bin": {
     "codegraph-mcp": "dist/mcp_server.js"
   },
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build:ts": "tsc",
     "build:cpp": "cmake -B build -S . && cmake --build build",
