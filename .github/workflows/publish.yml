@@ -30,7 +30,7 @@ jobs:
       - name: Setup CMake
         uses: jwlawson/actions-setup-cmake@v2
         with:
-          cmake-version: '3.25.x'
+          cmake-version: '3.26.x'
 
       - name: Install dependencies
         run: npm install
