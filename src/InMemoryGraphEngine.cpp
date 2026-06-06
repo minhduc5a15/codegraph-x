@@ -1,4 +1,5 @@
 #include "InMemoryGraphEngine.hpp"
+
 #include <iostream>
 
 void InMemoryGraphEngine::reserve(size_t num_nodes, size_t num_edges, size_t string_capacity) {
@@ -11,9 +12,15 @@ void InMemoryGraphEngine::reserve(size_t num_nodes, size_t num_edges, size_t str
 
 uint32_t InMemoryGraphEngine::register_string(std::string_view str) {
     if (is_frozen) return 0;
+    std::string key(str);
+    auto it = string_lookup.find(key);
+    if (it != string_lookup.end()) {
+        return it->second;
+    }
     uint32_t offset = static_cast<uint32_t>(string_pool.size());
     string_pool.insert(string_pool.end(), str.begin(), str.end());
     string_pool.push_back('\0');
+    string_lookup.emplace(std::move(key), offset);
     return offset;
 }
 
@@ -53,14 +60,13 @@ void InMemoryGraphEngine::build_from_raw(std::vector<NodeRecord>&& raw_nodes, co
     for (const auto& edge : raw_edges) {
         if (edge.source_node_id < num_nodes && edge.target_node_id < num_nodes) {
             uint32_t& pos = write_cursors[edge.source_node_id];
-            edges[pos] = { edge.target_node_id, edge.type };
+            edges[pos] = {edge.target_node_id, edge.type};
             pos++;
         }
     }
 
     if (dropped_edges > 0) {
-        std::cerr << "[WARNING] InMemoryGraphEngine dropped " << dropped_edges 
-                  << " invalid edges out of bounds." << std::endl;
+        std::cerr << "[WARNING] InMemoryGraphEngine dropped " << dropped_edges << " invalid edges out of bounds." << std::endl;
     }
 
     is_frozen = true;

@@ -52,6 +52,7 @@ add_library(codegraph_addon SHARED
     src/binding.cpp 
     src/InMemoryGraphEngine.cpp 
     src/parallel_parser.cpp
+    src/watchdog.cpp
 )
 set_target_properties(codegraph_addon PROPERTIES PREFIX "" SUFFIX ".node")
 target_include_directories(codegraph_addon PRIVATE src ${NODE_ADDON_API_DIR} ${CMAKE_JS_INC})

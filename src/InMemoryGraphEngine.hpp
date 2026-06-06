@@ -30,12 +30,15 @@ struct RawEdge {
     EdgeType type;
 };
 
+#include <unordered_map>
+
 class InMemoryGraphEngine {
 private:
     std::vector<NodeRecord> nodes;
     std::vector<uint32_t> offsets;
     std::vector<EdgeRecord> edges;
     std::vector<char> string_pool;
+    std::unordered_map<std::string, uint32_t> string_lookup;
     bool is_frozen = false;
 
 public:

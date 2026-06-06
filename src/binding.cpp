@@ -1,11 +1,88 @@
 #include <napi.h>
-#include <vector>
-#include <string>
+
+#include <cstring>
 #include <memory>
+#include <string>
+#include <vector>
+
 #include "InMemoryGraphEngine.hpp"
 #include "parallel_parser.hpp"
+#include "watchdog.hpp"
 
-Napi::Value ParseWorkspace(const Napi::CallbackInfo& info) {
+std::shared_ptr<ParallelParsingEngine> global_parser = nullptr;
+
+class UpdateWorkspaceWorker : public Napi::AsyncWorker {
+public:
+    UpdateWorkspaceWorker(Napi::Env& env, std::vector<std::string> files)
+        : Napi::AsyncWorker(env), files(std::move(files)), promise(Napi::Promise::Deferred::New(env)) {}
+
+    ~UpdateWorkspaceWorker() {}
+
+    Napi::Promise GetPromise() { return promise.Promise(); }
+
+protected:
+    void Execute() override {
+        if (!global_parser) {
+            global_parser = std::make_shared<ParallelParsingEngine>();
+        }
+        global_parser->execute(files);
+        global_parser->build_flat_graph();
+
+        engine = std::make_shared<InMemoryGraphEngine>();
+
+        auto temp_nodes = global_parser->take_nodes();
+        std::vector<NodeRecord> raw_nodes;
+        raw_nodes.reserve(temp_nodes.size());
+
+        for (const auto& tn : temp_nodes) {
+            NodeRecord nr;
+            nr.node_id = tn.node_id;
+            nr.name_pool_offset = engine->register_string(tn.name);
+            nr.path_pool_offset = engine->register_string(tn.path);
+            nr.start_line = tn.start_line;
+            nr.end_line = tn.end_line;
+            nr.type = tn.type;
+            std::memset(nr.padding, 0, sizeof(nr.padding));
+            raw_nodes.push_back(nr);
+        }
+
+        engine->build_from_raw(std::move(raw_nodes), global_parser->take_edges());
+    }
+
+    void OnOK() override {
+        Napi::Env env = Env();
+        Napi::Object result = Napi::Object::New(env);
+
+        auto create_buffer = [&](const char* key, void* data, size_t bytes) {
+            if (bytes == 0) {
+                result.Set(key, Napi::ArrayBuffer::New(env, 0));
+                return;
+            }
+
+            auto* hint = new std::shared_ptr<InMemoryGraphEngine>(engine);
+
+            auto buffer = Napi::ArrayBuffer::New(
+                env, data, bytes, [](Napi::Env /*env*/, void* /*data*/, std::shared_ptr<InMemoryGraphEngine>* hint_ptr) { delete hint_ptr; }, hint);
+            result.Set(key, buffer);
+        };
+
+        create_buffer("nodes", engine->get_nodes_data(), engine->get_nodes_bytes());
+        create_buffer("offsets", engine->get_offsets_data(), engine->get_offsets_bytes());
+        create_buffer("edges", engine->get_edges_data(), engine->get_edges_bytes());
+        create_buffer("stringPool", engine->get_string_pool_data(), engine->get_string_pool_bytes());
+
+        promise.Resolve(result);
+    }
+
+    void OnError(const Napi::Error& e) override { promise.Reject(e.Value()); }
+
+private:
+    std::vector<std::string> files;
+    std::shared_ptr<InMemoryGraphEngine> engine;
+    Napi::Promise::Deferred promise;
+};
+
+Napi::Value UpdateWorkspace(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
 
     if (info.Length() < 1 || !info[0].IsArray()) {
@@ -19,42 +96,24 @@ Napi::Value ParseWorkspace(const Napi::CallbackInfo& info) {
         files.push_back(files_js.Get(i).As<Napi::String>().Utf8Value());
     }
 
-    ParallelParsingEngine parser;
-    parser.execute(files);
+    auto* worker = new UpdateWorkspaceWorker(env, std::move(files));
+    worker->Queue();
+    return worker->GetPromise();
+}
 
-    auto engine = std::make_shared<InMemoryGraphEngine>();
-    engine->build_from_raw(parser.take_nodes(), parser.take_edges());
-
-    Napi::Object result = Napi::Object::New(env);
-    
-    auto create_buffer = [&](const char* key, void* data, size_t bytes) {
-        if (bytes == 0) {
-            result.Set(key, Napi::ArrayBuffer::New(env, 0));
-            return;
-        }
-
-        // Cấp phát một con trỏ giữ shared_ptr để truyền vào Finalizer
-        auto* hint = new std::shared_ptr<InMemoryGraphEngine>(engine);
-        
-        auto buffer = Napi::ArrayBuffer::New(env, data, bytes, 
-            [](Napi::Env /*env*/, void* /*data*/, std::shared_ptr<InMemoryGraphEngine>* hint_ptr) {
-                delete hint_ptr; // Giảm ref count. Bằng 0 sẽ tự hủy Engine.
-            }, 
-            hint
-        );
-        result.Set(key, buffer);
-    };
-
-    create_buffer("nodes", engine->get_nodes_data(), engine->get_nodes_bytes());
-    create_buffer("offsets", engine->get_offsets_data(), engine->get_offsets_bytes());
-    create_buffer("edges", engine->get_edges_data(), engine->get_edges_bytes());
-    create_buffer("stringPool", engine->get_string_pool_data(), engine->get_string_pool_bytes());
-
-    return result;
+Napi::Value SetupWatchdog(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    int parent_pid = 0;
+    if (info.Length() > 0 && info[0].IsNumber()) {
+        parent_pid = info[0].As<Napi::Number>().Int32Value();
+    }
+    initialize_parent_death_watchdog(parent_pid);
+    return env.Undefined();
 }
 
 Napi::Object InitAll(Napi::Env env, Napi::Object exports) {
-    exports.Set(Napi::String::New(env, "ParseWorkspace"), Napi::Function::New(env, ParseWorkspace));
+    exports.Set(Napi::String::New(env, "UpdateWorkspace"), Napi::Function::New(env, UpdateWorkspace));
+    exports.Set(Napi::String::New(env, "SetupWatchdog"), Napi::Function::New(env, SetupWatchdog));
     return exports;
 }
 
