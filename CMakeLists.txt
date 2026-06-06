@@ -55,7 +55,7 @@ add_library(codegraph_addon SHARED
 )
 set_target_properties(codegraph_addon PROPERTIES PREFIX "" SUFFIX ".node")
 target_include_directories(codegraph_addon PRIVATE src ${NODE_ADDON_API_DIR} ${CMAKE_JS_INC})
-target_link_libraries(codegraph_addon PRIVATE tree-sitter tree-sitter-cpp Threads::Threads)
+target_link_libraries(codegraph_addon PRIVATE tree-sitter tree-sitter-cpp Threads::Threads ${CMAKE_JS_LIB})
 target_compile_definitions(codegraph_addon PRIVATE NAPI_DISABLE_CPP_EXCEPTIONS)
 
 # Benchmark executable
