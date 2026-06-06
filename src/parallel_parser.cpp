@@ -159,10 +159,15 @@ void ParallelParsingEngine::worker_thread_func() {
 void ParallelParsingEngine::process_syntax_tree(TSTree* tree, const std::string& file_path, 
                                                std::vector<NodeRecord>& local_nodes, 
                                                std::vector<RawEdge>& local_edges) {
-    (void)tree; (void)file_path; (void)local_edges;
+    (void)file_path; (void)local_edges;
 
+    TSNode root = ts_tree_root_node(tree);
+    
     NodeRecord file_node{};
     file_node.node_id = static_cast<uint32_t>(local_nodes.size());
+    file_node.start_line = ts_node_start_point(root).row;
+    file_node.end_line = ts_node_end_point(root).row;
     file_node.type = NodeType::FILE;
+    
     local_nodes.push_back(file_node);
 }

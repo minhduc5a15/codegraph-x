@@ -22,8 +22,10 @@ int main() {
     engine.execute(mock_files);
 
     std::cout << "Parallel parsing finished." << std::endl;
-    std::cout << "Total Nodes collected: " << engine.get_nodes().size() << std::endl;
-    std::cout << "Total Edges collected: " << engine.get_edges().size() << std::endl;
+    auto nodes = engine.take_nodes();
+    auto edges = engine.take_edges();
+    std::cout << "Total Nodes collected: " << nodes.size() << std::endl;
+    std::cout << "Total Edges collected: " << edges.size() << std::endl;
 
     return 0;
 }
