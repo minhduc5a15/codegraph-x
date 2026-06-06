@@ -1,0 +1,12 @@
+{
+  "name": "@codegraph-x/core-linux-x64",
+  "version": "1.0.0",
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "main": "codegraph_addon.node",
+  "description": "Codegraph-X native binary for linux-x64"
+}

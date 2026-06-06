@@ -1,8 +1,11 @@
 {
-  "name": "codegraph-x",
+  "name": "@codegraph-x/core",
   "version": "1.0.0",
   "description": "A high-performance code graph analysis tool using C++ and Tree-sitter.",
   "main": "dist/index.js",
+  "bin": {
+    "codegraph-mcp": "dist/mcp_server.js"
+  },
   "scripts": {
     "build:ts": "tsc",
     "build:cpp": "cmake -B build -S . && cmake --build build",
@@ -11,6 +14,12 @@
     "start": "node dist/index.js",
     "test": "echo \"Error: no test specified\" && exit 1",
     "mcp": "node dist/mcp_server.js"
+  },
+  "optionalDependencies": {
+    "@codegraph-x/core-darwin-arm64": "1.0.0",
+    "@codegraph-x/core-darwin-x64": "1.0.0",
+    "@codegraph-x/core-linux-x64": "1.0.0",
+    "@codegraph-x/core-win32-x64": "1.0.0"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^0.6.0",
