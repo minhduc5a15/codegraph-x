@@ -76,21 +76,8 @@ async function main() {
           const req = JSON.parse(line);
           let result = null;
           if (graph) {
-            if (req.action === "get_node_info") {
-              result = graph.getNode(req.nodeId);
-            } else if (req.action === "get_node_neighbors") {
-              const { cursor, startIdx, endIdx } = graph.getEdgeCursor(
-                req.nodeId,
-              );
-              const neighbors = [];
-              for (let i = startIdx; i < endIdx; i++) {
-                cursor.moveTo(i);
-                neighbors.push({
-                  targetId: cursor.targetId,
-                  type: cursor.type,
-                });
-              }
-              result = neighbors;
+            if (req.action === "explore_flow") {
+              result = graph.exploreFlow(req.symbols || []);
             }
           }
           socket.write(JSON.stringify({ id: req.id, result }) + "\n");

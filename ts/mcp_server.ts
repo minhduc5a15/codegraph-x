@@ -5,11 +5,56 @@ import * as path from "path";
 import * as crypto from "crypto";
 import { spawn } from "child_process";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
+
+class LspStdioServerTransport {
+  onclose?: () => void;
+  onerror?: (error: Error) => void;
+  onmessage?: (message: any) => void;
+  private buffer = Buffer.alloc(0);
+
+  async start() {
+    process.stdin.on("data", (chunk) => {
+      this.buffer = Buffer.concat([this.buffer, chunk]);
+      this.processBuffer();
+    });
+    process.stdin.on("end", () => this.onclose?.());
+    process.stdin.on("error", (e) => this.onerror?.(e));
+  }
+
+  private processBuffer() {
+    while (true) {
+      const match = this.buffer.toString('utf-8').match(/Content-Length:\s*(\d+)\r\n\r\n/i);
+      if (!match) break;
+      const headerLength = match[0].length;
+      const contentLength = parseInt(match[1], 10);
+      if (this.buffer.length < headerLength + contentLength) break;
+
+      const payload = this.buffer.toString('utf-8', headerLength, headerLength + contentLength);
+      this.buffer = this.buffer.subarray(headerLength + contentLength);
+
+      try {
+        const message = JSON.parse(payload);
+        this.onmessage?.(message);
+      } catch (e) {
+        this.onerror?.(new Error("Parse error"));
+      }
+    }
+  }
+
+  async close() {
+    process.stdin.pause();
+    this.onclose?.();
+  }
+
+  async send(message: any) {
+    const payload = JSON.stringify(message);
+    process.stdout.write(`Content-Length: ${Buffer.byteLength(payload, 'utf-8')}\r\n\r\n${payload}`);
+  }
+}
 
 async function main() {
   if (process.argv.includes("--help") || process.argv.includes("-h")) {
@@ -71,9 +116,15 @@ async function main() {
   let reqId = 0;
   const pendingRequests = new Map<number, (res: any) => void>();
   let buffer = "";
+  const MAX_BUFFER_SIZE = 50 * 1024 * 1024; // 50MB
 
   clientSocket.on("data", (chunk) => {
     buffer += chunk.toString();
+    if (buffer.length > MAX_BUFFER_SIZE) {
+      console.error("Payload too large, destroying socket to prevent OOM.");
+      clientSocket?.destroy();
+      process.exit(1);
+    }
     const lines = buffer.split("\n");
     buffer = lines.pop() || "";
     for (const line of lines) {
@@ -103,36 +154,32 @@ async function main() {
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: [
       {
-        name: "get_node_info",
+        name: "explore-flow",
         description:
-          "Retrieve metadata for a specific node in the graph by its ID.",
+          "Extracts a unified hierarchical subgraph starting from a set of symbols. Use this to quickly understand the execution flow, caller context, or inheritance chain.",
         inputSchema: {
           type: "object",
-          properties: { nodeId: { type: "number" } },
-          required: ["nodeId"],
+          properties: {
+            symbols: {
+              type: "array",
+              items: { type: "string" },
+              description: "List of starting symbol names (e.g. ['MyClass', 'setup'])"
+            }
+          },
+          required: ["symbols"],
         },
-      },
-      {
-        name: "get_node_neighbors",
-        description:
-          "Retrieve the list of outgoing edges (neighbors) for a specific node.",
-        inputSchema: {
-          type: "object",
-          properties: { nodeId: { type: "number" } },
-          required: ["nodeId"],
-        },
-      },
+      }
     ],
   }));
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
     try {
-      if (name === "get_node_info" || name === "get_node_neighbors") {
-        const nodeId = Number(args?.nodeId);
-        if (isNaN(nodeId)) throw new Error("Invalid nodeId");
-
-        const result = await rpcCall(name, { nodeId });
+      if (name === "explore-flow") {
+        const symbols = Array.isArray(args?.symbols) ? args.symbols : [];
+        if (!symbols.length) throw new Error("Invalid symbols parameter");
+        
+        const result = await rpcCall("explore_flow", { symbols });
         return {
           content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
         };
@@ -146,8 +193,8 @@ async function main() {
     }
   });
 
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
+  const transport = new LspStdioServerTransport();
+  await server.connect(transport as any);
   console.error(
     `Codegraph-X MCP Client running on stdio (Connected to daemon ${socketPath})`,
   );
