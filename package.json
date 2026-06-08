@@ -9,7 +9,9 @@
     "codegraph-x": "dist/cli.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "src",
+    "binding.gyp"
   ],
   "scripts": {
     "build:ts": "tsc",
@@ -18,12 +20,13 @@
     "build": "npm run build:ts && npm run build:cpp",
     "start": "node dist/index.js",
     "test": "echo \"Error: no test specified\" && exit 1",
-    "mcp": "node dist/mcp_server.js"
+    "mcp": "node dist/mcp_server.js",
+    "prepublishOnly": "npm run build:ts"
   },
   "optionalDependencies": {
     "@codegraph-x/core-darwin-arm64": "1.0.0",
     "@codegraph-x/core-darwin-x64": "1.0.0",
-    "@codegraph-x/core-linux-x64": "1.0.0",
+    "@codegraph-x/core-linux-x64": "npm:null@*",
     "@codegraph-x/core-win32-x64": "1.0.0"
   },
   "dependencies": {
