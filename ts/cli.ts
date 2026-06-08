@@ -17,9 +17,10 @@ program
   });
 
 program
-  .command('mcp')
+  .command('mcp [targetDir]')
   .description('Start the MCP Server on stdio')
-  .action(() => {
+  .action((targetDir) => {
+    process.argv[2] = targetDir || process.cwd();
     require('./mcp_server');
   });
 
