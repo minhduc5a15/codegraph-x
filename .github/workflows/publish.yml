@@ -41,11 +41,11 @@ jobs:
       - name: Create optional package
         run: node scripts/build-optional-pkg.js
 
-      - name: Publish optional package (dry run)
+      - name: Publish optional package
         shell: bash
         run: |
           cd npm/*
-          npm publish --dry-run
+          npm publish
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
@@ -70,7 +70,7 @@ jobs:
       - name: Build TypeScript
         run: npm run build:ts
 
-      - name: Publish core package (dry run)
-        run: npm publish --dry-run
+      - name: Publish core package
+        run: npm publish
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
