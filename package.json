@@ -1,6 +1,6 @@
 {
   "name": "@codegraph-x/core",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "A high-performance code graph analysis tool using C++ and Tree-sitter.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
