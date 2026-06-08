@@ -212,9 +212,15 @@ export class Codegraph {
       for (let i = startIdx; i < endIdx; i++) {
         cursor.moveTo(i);
         const targetId = cursor.targetId;
+        let targetName = "Unknown";
+        try {
+          targetName = this.getNode(targetId).name;
+        } catch (e) {}
+
         neighbors.push({
           targetId: targetId,
           type: cursor.type,
+          name: targetName,
         });
 
         if (depth < maxDepth && !visited.has(targetId)) {
