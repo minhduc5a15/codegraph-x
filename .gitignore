@@ -40,4 +40,4 @@ lerna-debug.log*
 logs
 npm/
 reports
-images
+.gemini

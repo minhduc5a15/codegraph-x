@@ -38,7 +38,7 @@ void InMemoryGraphEngine::build_from_raw(std::vector<NodeRecord>&& raw_nodes, co
     nodes = std::move(raw_nodes);
     uint32_t num_nodes = static_cast<uint32_t>(nodes.size());
 
-    // 1. Tính toán Out-degree với Sanity Check và Error Tracking
+    // 1. Calculate Out-degree with Sanity Check and Error Tracking
     offsets.assign(num_nodes + 1, 0);
     for (const auto& edge : raw_edges) {
         if (edge.source_node_id < num_nodes && edge.target_node_id < num_nodes) {
@@ -53,7 +53,7 @@ void InMemoryGraphEngine::build_from_raw(std::vector<NodeRecord>&& raw_nodes, co
         offsets[i] += offsets[i - 1];
     }
 
-    // 3. Fill edges với Sanity Check và Error Tracking
+    // 3. Fill edges with Sanity Check and Error Tracking
     edges.resize(offsets[num_nodes]);
     std::vector<uint32_t> write_cursors = offsets;
 

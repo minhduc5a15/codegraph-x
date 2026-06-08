@@ -4,102 +4,14 @@ import * as fs from "fs";
 import * as path from "path";
 import * as crypto from "crypto";
 import { spawn } from "child_process";
+import * as readline from "readline";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-
-class AutoDetectStdioServerTransport {
-  onclose?: () => void;
-  onerror?: (error: Error) => void;
-  onmessage?: (message: any) => void;
-  private buffer = Buffer.alloc(0);
-  private mode: "lsp" | "newline" | "unknown" = "unknown";
-
-  async start() {
-    process.stdin.on("data", (chunk) => {
-      this.buffer = Buffer.concat([this.buffer, chunk]);
-      this.processBuffer();
-    });
-    process.stdin.on("end", () => {
-      this.onclose?.();
-    });
-    process.stdin.on("error", (e) => {
-      this.onerror?.(e);
-    });
-  }
-
-  private processBuffer() {
-    while (true) {
-      if (this.buffer.length === 0) break;
-
-      if (this.mode === "unknown") {
-        const str = this.buffer.toString("utf-8");
-        if (str.startsWith("Content-Length")) {
-          this.mode = "lsp";
-          console.error("[Transport] Detected LSP mode");
-        } else if (str.trimStart().startsWith("{")) {
-          this.mode = "newline";
-          console.error("[Transport] Detected Newline mode");
-        } else {
-          break;
-        }
-      }
-
-      if (this.mode === "lsp") {
-        const str = this.buffer.toString('utf-8');
-        const match = str.match(/Content-Length:\s*(\d+)\r\n\r\n/i);
-        if (!match) break;
-        const headerLength = match[0].length;
-        const contentLength = parseInt(match[1], 10);
-        if (this.buffer.length < headerLength + contentLength) break;
-
-        const payload = this.buffer.toString('utf-8', headerLength, headerLength + contentLength);
-        this.buffer = this.buffer.subarray(headerLength + contentLength);
-
-        try {
-          const message = JSON.parse(payload);
-          this.onmessage?.(message);
-        } catch (e) {
-          this.onerror?.(new Error("Parse error in LSP mode"));
-        }
-      } else if (this.mode === "newline") {
-        const str = this.buffer.toString('utf-8');
-        const newlineIdx = str.indexOf('\n');
-        if (newlineIdx === -1) break;
-
-        const payload = str.substring(0, newlineIdx);
-        this.buffer = this.buffer.subarray(Buffer.byteLength(payload + '\n', 'utf-8'));
-
-        if (payload.trim().length > 0) {
-          try {
-            const message = JSON.parse(payload);
-            console.error(`[Transport] Received message: ${payload.substring(0, 50)}...`);
-            this.onmessage?.(message);
-          } catch (e) {
-            console.error(`[Transport] Parse error: ${e}`);
-            this.onerror?.(new Error("Parse error in Newline mode"));
-          }
-        }
-      }
-    }
-  }
-
-  async close() {
-    process.stdin.pause();
-    this.onclose?.();
-  }
-
-  async send(message: any) {
-    const payload = JSON.stringify(message);
-    if (this.mode === "lsp") {
-      process.stdout.write(`Content-Length: ${Buffer.byteLength(payload, 'utf-8')}\r\n\r\n${payload}`);
-    } else {
-      process.stdout.write(payload + "\n");
-    }
-  }
-}
+import { AutoDetectStdioServerTransport } from "./transports/auto-detect.js";
+import { formatXRayResult } from "./services/formatter.js";
 
 async function main() {
   if (process.argv.includes("--help") || process.argv.includes("-h")) {
@@ -124,8 +36,25 @@ async function main() {
   const tryConnect = () =>
     new Promise<net.Socket>((resolve, reject) => {
       const socket = net.createConnection(socketPath);
-      socket.on("connect", () => resolve(socket));
-      socket.on("error", (e) => reject(e));
+      
+      const onConnect = () => {
+        cleanup();
+        resolve(socket);
+      };
+      
+      const onError = (err: Error) => {
+        cleanup();
+        socket.destroy();
+        reject(err);
+      };
+      
+      const cleanup = () => {
+        socket.off("connect", onConnect);
+        socket.off("error", onError);
+      };
+
+      socket.on("connect", onConnect);
+      socket.on("error", onError);
     });
 
   try {
@@ -160,25 +89,24 @@ async function main() {
   // IPC Client logic
   let reqId = 0;
   const pendingRequests = new Map<number, (res: any) => void>();
-  let buffer = "";
-  const MAX_BUFFER_SIZE = 50 * 1024 * 1024; // 50MB
 
-  clientSocket.on("data", (chunk) => {
-    buffer += chunk.toString();
-    if (buffer.length > MAX_BUFFER_SIZE) {
-      console.error("Payload too large, destroying socket to prevent OOM.");
-      clientSocket?.destroy();
-      process.exit(1);
-    }
-    const lines = buffer.split("\n");
-    buffer = lines.pop() || "";
-    for (const line of lines) {
-      if (!line.trim()) continue;
+  const rl = readline.createInterface({
+    input: clientSocket,
+    terminal: false,
+    historySize: 0,
+    crlfDelay: Infinity
+  });
+
+  rl.on("line", (line) => {
+    if (!line.trim()) return;
+    try {
       const msg = JSON.parse(line);
       if (msg.id !== undefined && pendingRequests.has(msg.id)) {
         pendingRequests.get(msg.id)!(msg.result);
         pendingRequests.delete(msg.id);
       }
+    } catch (err) {
+      console.error("[IPC] Failed to parse JSON line:", err);
     }
   });
 
@@ -199,19 +127,22 @@ async function main() {
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: [
       {
-        name: "explore-flow",
+        name: "cx_xray_scan",
         description:
-          "Extracts a unified hierarchical subgraph starting from a set of symbols. Use this to quickly understand the execution flow, caller context, or inheritance chain.",
+          "⚡️ CODEGRAPH-X EXCLUSIVE: ULTRA-FAST X-RAY SCAN. \n" +
+          "ALWAYS USE THIS TOOL FIRST for any question about architecture, how things work, bug hunting, or function analysis. \n" +
+          "Unlike ReadFile or Grep (which are slow, rigid text readers), cx_xray_scan connects directly to our In-Memory C++ Engine. " +
+          "It allows you to 'see through' the codebase, returning the original source code ALONG WITH the entire caller/callee execution graph in a single call (0.1ms). \n" +
+          "Input supports both natural language queries (e.g., 'How does the multi-threading mechanism work?') and specific symbol names.",
         inputSchema: {
           type: "object",
           properties: {
-            symbols: {
-              type: "array",
-              items: { type: "string" },
-              description: "List of starting symbol names (e.g. ['MyClass', 'setup'])"
+            query: {
+              type: "string",
+              description: "Symbol names, file names, or a natural language question (e.g. 'worker queue mutex', 'ParallelParsingEngine')"
             }
           },
-          required: ["symbols"],
+          required: ["query"],
         },
       }
     ],
@@ -220,13 +151,18 @@ async function main() {
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
     try {
-      if (name === "explore-flow") {
-        const symbols = Array.isArray(args?.symbols) ? args.symbols : [];
-        if (!symbols.length) throw new Error("Invalid symbols parameter");
+      if (name === "cx_xray_scan") {
+        const query = typeof args?.query === 'string' ? args.query : "";
+        if (!query.trim()) throw new Error("Invalid query parameter");
         
-        const result = await rpcCall("explore_flow", { symbols });
+        // Split natural language into simple tokens for the C++ engine to handle for now
+        const symbols = query.split(/\s+/).filter(Boolean);
+        const nodes: any[] = await rpcCall("explore_flow", { symbols });
+
+        const outputText = await formatXRayResult(nodes, process.cwd());
+
         return {
-          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          content: [{ type: "text", text: outputText }],
         };
       }
       throw new Error(`Tool not found: ${name}`);

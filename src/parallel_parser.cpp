@@ -60,7 +60,7 @@ void ParallelParsingEngine::initialize_workers() {
 void ParallelParsingEngine::execute(const std::vector<std::string>& files_to_parse) {
     initialize_workers();
 
-    // Xóa Data Cũ (Stale Data)
+    // Remove Stale Data
     {
         std::lock_guard<std::mutex> lock(map_mutex);
         std::unordered_set<std::string> valid_files(files_to_parse.begin(), files_to_parse.end());
