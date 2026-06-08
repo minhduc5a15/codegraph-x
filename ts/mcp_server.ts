@@ -10,37 +10,78 @@ import {
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 
-class LspStdioServerTransport {
+class AutoDetectStdioServerTransport {
   onclose?: () => void;
   onerror?: (error: Error) => void;
   onmessage?: (message: any) => void;
   private buffer = Buffer.alloc(0);
+  private mode: "lsp" | "newline" | "unknown" = "unknown";
 
   async start() {
     process.stdin.on("data", (chunk) => {
       this.buffer = Buffer.concat([this.buffer, chunk]);
       this.processBuffer();
     });
-    process.stdin.on("end", () => this.onclose?.());
-    process.stdin.on("error", (e) => this.onerror?.(e));
+    process.stdin.on("end", () => {
+      this.onclose?.();
+    });
+    process.stdin.on("error", (e) => {
+      this.onerror?.(e);
+    });
   }
 
   private processBuffer() {
     while (true) {
-      const match = this.buffer.toString('utf-8').match(/Content-Length:\s*(\d+)\r\n\r\n/i);
-      if (!match) break;
-      const headerLength = match[0].length;
-      const contentLength = parseInt(match[1], 10);
-      if (this.buffer.length < headerLength + contentLength) break;
+      if (this.buffer.length === 0) break;
 
-      const payload = this.buffer.toString('utf-8', headerLength, headerLength + contentLength);
-      this.buffer = this.buffer.subarray(headerLength + contentLength);
+      if (this.mode === "unknown") {
+        const str = this.buffer.toString("utf-8");
+        if (str.startsWith("Content-Length")) {
+          this.mode = "lsp";
+          console.error("[Transport] Detected LSP mode");
+        } else if (str.trimStart().startsWith("{")) {
+          this.mode = "newline";
+          console.error("[Transport] Detected Newline mode");
+        } else {
+          break;
+        }
+      }
 
-      try {
-        const message = JSON.parse(payload);
-        this.onmessage?.(message);
-      } catch (e) {
-        this.onerror?.(new Error("Parse error"));
+      if (this.mode === "lsp") {
+        const str = this.buffer.toString('utf-8');
+        const match = str.match(/Content-Length:\s*(\d+)\r\n\r\n/i);
+        if (!match) break;
+        const headerLength = match[0].length;
+        const contentLength = parseInt(match[1], 10);
+        if (this.buffer.length < headerLength + contentLength) break;
+
+        const payload = this.buffer.toString('utf-8', headerLength, headerLength + contentLength);
+        this.buffer = this.buffer.subarray(headerLength + contentLength);
+
+        try {
+          const message = JSON.parse(payload);
+          this.onmessage?.(message);
+        } catch (e) {
+          this.onerror?.(new Error("Parse error in LSP mode"));
+        }
+      } else if (this.mode === "newline") {
+        const str = this.buffer.toString('utf-8');
+        const newlineIdx = str.indexOf('\n');
+        if (newlineIdx === -1) break;
+
+        const payload = str.substring(0, newlineIdx);
+        this.buffer = this.buffer.subarray(Buffer.byteLength(payload + '\n', 'utf-8'));
+
+        if (payload.trim().length > 0) {
+          try {
+            const message = JSON.parse(payload);
+            console.error(`[Transport] Received message: ${payload.substring(0, 50)}...`);
+            this.onmessage?.(message);
+          } catch (e) {
+            console.error(`[Transport] Parse error: ${e}`);
+            this.onerror?.(new Error("Parse error in Newline mode"));
+          }
+        }
       }
     }
   }
@@ -52,7 +93,11 @@ class LspStdioServerTransport {
 
   async send(message: any) {
     const payload = JSON.stringify(message);
-    process.stdout.write(`Content-Length: ${Buffer.byteLength(payload, 'utf-8')}\r\n\r\n${payload}`);
+    if (this.mode === "lsp") {
+      process.stdout.write(`Content-Length: ${Buffer.byteLength(payload, 'utf-8')}\r\n\r\n${payload}`);
+    } else {
+      process.stdout.write(payload + "\n");
+    }
   }
 }
 
@@ -193,7 +238,7 @@ async function main() {
     }
   });
 
-  const transport = new LspStdioServerTransport();
+  const transport = new AutoDetectStdioServerTransport();
   await server.connect(transport as any);
   console.error(
     `Codegraph-X MCP Client running on stdio (Connected to daemon ${socketPath})`,
