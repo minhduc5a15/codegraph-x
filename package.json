@@ -24,10 +24,10 @@
     "prepublishOnly": "npm run build:ts"
   },
   "optionalDependencies": {
-    "@codegraph-x/core-darwin-arm64": "1.0.0",
-    "@codegraph-x/core-darwin-x64": "1.0.0",
-    "@codegraph-x/core-linux-x64": "npm:null@*",
-    "@codegraph-x/core-win32-x64": "1.0.0"
+    "@codegraph-x/core-darwin-arm64": "^1.0.0",
+    "@codegraph-x/core-darwin-x64": "^1.0.0",
+    "@codegraph-x/core-linux-x64": "^1.0.0",
+    "@codegraph-x/core-win32-x64": "^1.0.0"
   },
   "dependencies": {
     "@clack/prompts": "^1.5.1",
