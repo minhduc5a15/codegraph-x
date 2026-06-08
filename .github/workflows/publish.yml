@@ -46,7 +46,13 @@ jobs:
         shell: bash
         run: |
           cd npm/*
-          npm publish --access public
+          PKG_NAME=$(jq -r .name package.json)
+          PKG_VERSION=$(jq -r .version package.json)
+          if npm view "$PKG_NAME@$PKG_VERSION" version &>/dev/null; then
+            echo "Version $PKG_VERSION of $PKG_NAME already exists on NPM. Skipping publish."
+          else
+            npm publish --access public
+          fi
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
@@ -72,6 +78,13 @@ jobs:
         run: npm run build:ts
 
       - name: Publish core package
-        run: npm publish --access public
+        run: |
+          PKG_NAME=$(jq -r .name package.json)
+          PKG_VERSION=$(jq -r .version package.json)
+          if npm view "$PKG_NAME@$PKG_VERSION" version &>/dev/null; then
+            echo "Version $PKG_VERSION of $PKG_NAME already exists on NPM. Skipping publish."
+          else
+            npm publish --access public
+          fi
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
