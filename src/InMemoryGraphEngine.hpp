@@ -5,9 +5,9 @@
 #include <utility>
 #include <vector>
 
-enum class NodeType : uint8_t { FILE = 0, CLASS = 1, FUNCTION = 2, METHOD = 3 };
+enum class NodeType : uint8_t { FILE = 0, CLASS = 1, FUNCTION = 2, METHOD = 3, EXTERNAL = 4 };
 
-enum class EdgeType : uint8_t { CALLS = 0, INHERITS = 1, IMPORTS = 2 };
+enum class EdgeType : uint8_t { CALLS = 0, INHERITS = 1, IMPORTS = 2, AMBIGUOUS_CALL = 3 };
 
 struct NodeRecord {
     uint32_t node_id;           // offset 0

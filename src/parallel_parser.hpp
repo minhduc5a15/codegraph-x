@@ -27,6 +27,7 @@ public:
         uint32_t start_line;
         uint32_t end_line;
         NodeType type;
+        std::vector<std::string> enclosing_scopes;
     };
 
     std::vector<TempNodeRecord> take_nodes() { return std::move(global_nodes); }
@@ -42,11 +43,18 @@ private:
     void initialize_workers();
     void worker_thread_func();
     void process_syntax_tree(TSTree* tree, const std::string& file_path, const char* source_code, std::vector<TempNodeRecord>& local_nodes,
-                             std::vector<UnresolvedEdge>& local_edges);
+                             std::vector<UnresolvedEdge>& local_edges, struct TSQuery* call_query, struct TSQueryCursor* query_cursor);
+
+    struct UnresolvedExternal {
+        size_t edge_index;
+        TempNodeRecord node;
+    };
 
     struct FileData {
         std::vector<TempNodeRecord> nodes;
         std::vector<UnresolvedEdge> edges;
+        std::vector<RawEdge> resolved_edges;
+        std::vector<UnresolvedExternal> resolved_external_nodes;
     };
     std::unordered_map<std::string, FileData> file_data_map;
     std::mutex map_mutex;

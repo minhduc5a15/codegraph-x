@@ -3,12 +3,14 @@ export enum NodeType {
   CLASS = 1,
   FUNCTION = 2,
   METHOD = 3,
+  EXTERNAL = 4,
 }
 
 export enum EdgeType {
   CALLS = 0,
   INHERITS = 1,
   IMPORTS = 2,
+  AMBIGUOUS_CALL = 3,
 }
 
 export interface GraphData {
