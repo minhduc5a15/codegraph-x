@@ -48,6 +48,7 @@ export class Codegraph {
   private nameIndex: Map<string, number[]> = new Map();
   private pathIndex: Map<string, number[]> = new Map();
   private tokenIndex: Map<string, number[]> = new Map();
+  private incomingEdges: Map<number, number[]> = new Map();
 
   constructor(data: GraphData) {
     this.nodesView = new DataView(data.nodes);
@@ -97,6 +98,22 @@ export class Codegraph {
           this.pathIndex.set(path, arr);
         }
         arr.push(i);
+      }
+    }
+
+    const count2 = this.nodeCount;
+    for (let sourceId = 0; sourceId < count2; sourceId++) {
+      const startIdx = this.offsets[sourceId];
+      const endIdx = this.offsets[sourceId + 1];
+      for (let j = startIdx; j < endIdx; j++) {
+        const targetId = this.edgesView.getUint32(j * 8, true);
+        
+        let callers = this.incomingEdges.get(targetId);
+        if (!callers) {
+          callers = [];
+          this.incomingEdges.set(targetId, callers);
+        }
+        callers.push(sourceId);
       }
     }
   }
@@ -306,13 +323,33 @@ export class Codegraph {
         }
       }
       
+      const callersList = this.incomingEdges.get(id) || [];
+      const callers = [];
+      for (const callerId of callersList) {
+        let callerName = "Unknown";
+        try {
+          callerName = this.getNode(callerId).name;
+        } catch (e) {}
+        callers.push({
+          sourceId: callerId,
+          name: callerName
+        });
+        
+        if (depth < maxDepth && !visited.has(callerId)) {
+          visited.add(callerId);
+          queue.push({ id: callerId, depth: depth + 1 });
+        }
+      }
+      
       flowGraph.push({
         ...nodeInfo,
-        neighbors
+        depth,
+        neighbors,
+        callers
       });
       
-      // Hard limit for context window safety
-      if (flowGraph.length >= 1000) break;
+      // Hard limit for context window safety and UI performance
+      if (flowGraph.length >= 100) break;
     }
 
     return flowGraph;

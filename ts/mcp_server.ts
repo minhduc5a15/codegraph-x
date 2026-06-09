@@ -88,7 +88,7 @@ async function main() {
 
   // IPC Client logic
   let reqId = 0;
-  const pendingRequests = new Map<number, (res: any) => void>();
+  const pendingRequests = new Map<number, { resolve: (res: any) => void, reject: (err: any) => void }>();
 
   const rl = readline.createInterface({
     input: clientSocket,
@@ -102,7 +102,11 @@ async function main() {
     try {
       const msg = JSON.parse(line);
       if (msg.id !== undefined && pendingRequests.has(msg.id)) {
-        pendingRequests.get(msg.id)!(msg.result);
+        if (msg.error) {
+          pendingRequests.get(msg.id)!.reject(new Error(msg.error));
+        } else {
+          pendingRequests.get(msg.id)!.resolve(msg.result);
+        }
         pendingRequests.delete(msg.id);
       }
     } catch (err) {
@@ -111,9 +115,9 @@ async function main() {
   });
 
   const rpcCall = (action: string, params: any): Promise<any> => {
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       const id = ++reqId;
-      pendingRequests.set(id, resolve);
+      pendingRequests.set(id, { resolve, reject });
       clientSocket!.write(JSON.stringify({ id, action, ...params }) + "\n");
     });
   };
@@ -127,22 +131,35 @@ async function main() {
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: [
       {
-        name: "cx_xray_scan",
+        name: "explore_codebase",
         description:
-          "⚡️ CODEGRAPH-X EXCLUSIVE: ULTRA-FAST X-RAY SCAN. \n" +
-          "ALWAYS USE THIS TOOL FIRST for any question about architecture, how things work, bug hunting, or function analysis. \n" +
-          "Unlike ReadFile or Grep (which are slow, rigid text readers), cx_xray_scan connects directly to our In-Memory C++ Engine. " +
-          "It allows you to 'see through' the codebase, returning the original source code ALONG WITH the entire caller/callee execution graph in a single call (0.1ms). \n" +
-          "Input supports both natural language queries (e.g., 'How does the multi-threading mechanism work?') and specific symbol names.",
+          "PRIMARY TOOL — ALWAYS call FIRST for almost any question about the codebase: how does X work, architecture, a bug, where/what is X, or surveying an area. \n" +
+          "DO NOT USE SearchText or ReadFile before using this tool. \n" +
+          "This tool connects directly to an In-Memory C++ Engine, returning structural metadata, execution call paths, and the most important source code blocks instantly. \n" +
+          "If you need to view the full source code of a specific node omitted in the results, use the `read_node` tool with the ID provided in the scan results.",
         inputSchema: {
           type: "object",
           properties: {
             query: {
               type: "string",
-              description: "Symbol names, file names, or a natural language question (e.g. 'worker queue mutex', 'ParallelParsingEngine')"
+              description: "Symbol names, file names, or a natural language question (e.g. 'worker queue mutex', 'How does the secure allocator work?')"
             }
           },
           required: ["query"],
+        },
+      },
+      {
+        name: "read_node",
+        description: "Fetches the full raw source code for a specific node/symbol discovered by explore_codebase. You must provide the exact integer node_id.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            node_id: {
+              type: "number",
+              description: "The integer ID of the node to read, obtained from cx_xray_scan results."
+            }
+          },
+          required: ["node_id"],
         },
       }
     ],
@@ -151,7 +168,7 @@ async function main() {
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
     try {
-      if (name === "cx_xray_scan") {
+      if (name === "explore_codebase" || name === "cx_xray_scan") {
         const query = typeof args?.query === 'string' ? args.query : "";
         if (!query.trim()) throw new Error("Invalid query parameter");
         
@@ -161,6 +178,15 @@ async function main() {
 
         const outputText = await formatXRayResult(nodes, process.cwd());
 
+        return {
+          content: [{ type: "text", text: outputText }],
+        };
+      } else if (name === "read_node" || name === "cx_read_node") {
+        const parsedId = Number(args?.node_id);
+        const node_id = !isNaN(parsedId) ? parsedId : -1;
+        if (node_id < 0) throw new Error("Invalid node_id parameter");
+        
+        const outputText = await rpcCall("read_node", { node_id });
         return {
           content: [{ type: "text", text: outputText }],
         };

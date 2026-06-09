@@ -276,6 +276,17 @@ void ParallelParsingEngine::build_flat_graph() {
             global_nodes.push_back(ext.node);
             data->resolved_edges[ext.edge_index].target_node_id = new_id;
         }
+
+        std::sort(data->resolved_edges.begin(), data->resolved_edges.end(), [](const RawEdge& a, const RawEdge& b) {
+            if (a.source_node_id != b.source_node_id) return a.source_node_id < b.source_node_id;
+            if (a.target_node_id != b.target_node_id) return a.target_node_id < b.target_node_id;
+            return a.type < b.type;
+        });
+        auto last = std::unique(data->resolved_edges.begin(), data->resolved_edges.end(), [](const RawEdge& a, const RawEdge& b) {
+            return a.source_node_id == b.source_node_id && a.target_node_id == b.target_node_id && a.type == b.type;
+        });
+        data->resolved_edges.erase(last, data->resolved_edges.end());
+
         global_edges.insert(global_edges.end(), data->resolved_edges.begin(), data->resolved_edges.end());
     }
 }
