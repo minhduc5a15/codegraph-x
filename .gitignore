@@ -42,3 +42,7 @@ npm/
 reports
 .gemini
 plantests/
+plan/
+test_ts.js
+parser_log.txt
+tests/
