@@ -2,7 +2,7 @@
 #include <string>
 #include <vector>
 
-#include "InMemoryGraphEngine.hpp"
+#include "in_memory_graph_engine.hpp"
 #include "parallel_parser.hpp"
 #include "parser.hpp"
 

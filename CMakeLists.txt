@@ -40,7 +40,7 @@ target_link_libraries(tree-sitter-cpp PRIVATE tree-sitter)
 # Core executable
 add_executable(codegraph-x 
     src/main.cpp 
-    src/InMemoryGraphEngine.cpp 
+    src/in_memory_graph_engine.cpp 
     src/parser.cpp
     src/parallel_parser.cpp
 )
@@ -50,7 +50,7 @@ target_link_libraries(codegraph-x PRIVATE tree-sitter tree-sitter-cpp Threads::T
 # Native Addon Target
 add_library(codegraph_addon SHARED 
     src/binding.cpp 
-    src/InMemoryGraphEngine.cpp 
+    src/in_memory_graph_engine.cpp 
     src/parallel_parser.cpp
     src/watchdog.cpp
 )
@@ -64,7 +64,7 @@ find_package(benchmark QUIET)
 if (benchmark_FOUND)
     add_executable(graph_engine_benchmark 
         tests/graph_engine_benchmark.cpp 
-        src/InMemoryGraphEngine.cpp
+        src/in_memory_graph_engine.cpp
     )
     target_include_directories(graph_engine_benchmark PRIVATE src)
     target_link_libraries(graph_engine_benchmark PRIVATE benchmark::benchmark Threads::Threads)

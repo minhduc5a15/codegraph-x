@@ -1,8 +1,8 @@
-import { Codegraph, GraphData } from "./Codegraph.js";
+import { Codegraph, GraphData } from "./codegraph.js";
 import { platform, arch } from "os";
 import { join } from "path";
 
-export * from "./Codegraph.js";
+export * from "./codegraph.js";
 
 let addon: any = null;
 const platformKey = `${platform()}-${arch()}`;

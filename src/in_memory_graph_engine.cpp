@@ -1,4 +1,4 @@
-#include "InMemoryGraphEngine.hpp"
+#include "in_memory_graph_engine.hpp"
 
 #include <iostream>
 
