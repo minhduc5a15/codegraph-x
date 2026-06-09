@@ -1,6 +1,6 @@
 {
   "name": "@codegraph-x/core",
-  "version": "1.0.9",
+  "version": "1.0.10",
   "description": "A high-performance code graph analysis tool using C++ and Tree-sitter.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -31,12 +31,9 @@
   },
   "dependencies": {
     "@clack/prompts": "^1.5.1",
-    "@codegraph-x/core": "^1.0.0",
     "@modelcontextprotocol/sdk": "^0.6.0",
     "commander": "^15.0.0",
     "node-addon-api": "^8.0.0",
-    "tree-sitter": "^0.21.1",
-    "tree-sitter-cpp": "^0.23.4",
     "ws": "^8.21.0"
   },
   "devDependencies": {
