@@ -45,6 +45,7 @@ export class Codegraph {
   private sharedEdgeCursor: EdgeCursor;
   private nameIndex: Map<string, number[]> = new Map();
   private pathIndex: Map<string, number[]> = new Map();
+  private tokenIndex: Map<string, number[]> = new Map();
 
   constructor(data: GraphData) {
     this.nodesView = new DataView(data.nodes);
@@ -73,6 +74,18 @@ export class Codegraph {
           this.nameIndex.set(name, arr);
         }
         arr.push(i);
+
+        const tokens = this.tokenizeSymbol(name);
+        for (const token of tokens) {
+          let tArr = this.tokenIndex.get(token);
+          if (!tArr) {
+            tArr = [];
+            this.tokenIndex.set(token, tArr);
+          }
+          if (tArr.length === 0 || tArr[tArr.length - 1] !== i) {
+            tArr.push(i);
+          }
+        }
       }
 
       if (path) {
@@ -84,6 +97,53 @@ export class Codegraph {
         arr.push(i);
       }
     }
+  }
+
+  private tokenizeSymbol(name: string): string[] {
+    const step1 = name.replace(/[^a-zA-Z0-9]/g, ' ');
+    const step2 = step1.replace(/([a-z])([A-Z])/g, '$1 $2');
+    const tokens = step2.toLowerCase().split(/\s+/).filter(t => t.length > 0);
+    return Array.from(new Set(tokens));
+  }
+
+  private intersectSorted(arr1: number[], arr2: number[]): number[] {
+    const result: number[] = [];
+    let i = 0, j = 0;
+    while(i < arr1.length && j < arr2.length) {
+      if (arr1[i] < arr2[j]) i++;
+      else if (arr1[i] > arr2[j]) j++;
+      else {
+        result.push(arr1[i]);
+        i++;
+        j++;
+      }
+    }
+    return result;
+  }
+
+  private getTokenMatches(token: string): number[] {
+    const exactIds = this.tokenIndex.get(token);
+    if (exactIds) {
+      return exactIds;
+    }
+
+    if (token.length < 2) {
+      return [];
+    }
+      
+    // Fallback: substring scan over unique tokens
+    const matchedIds = new Set<number>();
+    for (const [key, ids] of this.tokenIndex.entries()) {
+      if (key.includes(token)) {
+        for (const id of ids) {
+          matchedIds.add(id);
+        }
+      }
+    }
+    
+    const result = Array.from(matchedIds);
+    result.sort((a, b) => a - b);
+    return result;
   }
 
   public resolveString(offset: number): string {
@@ -141,16 +201,22 @@ export class Codegraph {
       return results;
     }
     
-    // Fallback to substring matching if exact match fails
-    for (const [name, ids] of this.nameIndex.entries()) {
-      if (name.includes(nameMatch)) {
-        for (const id of ids) {
-          results.push(this.getNode(id));
-        }
+    // Fast token index fallback with partial match support
+    const tokens = this.tokenizeSymbol(nameMatch);
+    if (tokens.length > 0) {
+      let candidateIds = this.getTokenMatches(tokens[0]);
+      for (let i = 1; i < tokens.length; i++) {
+        const nextIds = this.getTokenMatches(tokens[i]);
+        candidateIds = this.intersectSorted(candidateIds, nextIds);
+        if (candidateIds.length === 0) break;
       }
-      // Limit to 100 results to avoid massive payloads
-      if (results.length >= 100) break;
+      
+      for (const id of candidateIds) {
+        results.push(this.getNode(id));
+        if (results.length >= 100) break;
+      }
     }
+    
     return results;
   }
 
@@ -182,14 +248,23 @@ export class Codegraph {
           }
         }
       } else {
-        // substring match fallback
-        for (const [name, nameIds] of this.nameIndex.entries()) {
-          if (name.includes(sym)) {
-            for (const id of nameIds) {
-              if (!visited.has(id)) {
-                visited.add(id);
-                queue.push({ id, depth: 0 });
-              }
+        // Fast token index fallback with partial match support
+        const tokens = this.tokenizeSymbol(sym);
+        if (tokens.length > 0) {
+          let candidateIds = this.getTokenMatches(tokens[0]);
+          for (let i = 1; i < tokens.length; i++) {
+            const nextIds = this.getTokenMatches(tokens[i]);
+            candidateIds = this.intersectSorted(candidateIds, nextIds);
+            if (candidateIds.length === 0) break;
+          }
+          
+          let addedCount = 0;
+          for (const id of candidateIds) {
+            if (!visited.has(id)) {
+              visited.add(id);
+              queue.push({ id, depth: 0 });
+              addedCount++;
+              if (addedCount >= 50) break; // Guard rail for starting nodes
             }
           }
         }
