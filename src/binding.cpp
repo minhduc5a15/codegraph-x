@@ -166,11 +166,30 @@ Napi::Value SearchPathSubstring(const Napi::CallbackInfo& info) {
     return js_results;
 }
 
+Napi::Value SearchFuzzy(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    if (!global_engine) {
+        return Napi::Array::New(env, 0);
+    }
+    if (info.Length() < 1 || !info[0].IsString()) {
+        Napi::TypeError::New(env, "Expected a string query").ThrowAsJavaScriptException();
+        return env.Null();
+    }
+    const std::string query = info[0].As<Napi::String>().Utf8Value();
+    const auto results = global_engine->search_fuzzy(query);
+    Napi::Array js_results = Napi::Array::New(env, results.size());
+    for (size_t i = 0; i < results.size(); ++i) {
+        js_results.Set(i, Napi::Number::New(env, results[i]));
+    }
+    return js_results;
+}
+
 Napi::Object InitAll(Napi::Env env, Napi::Object exports) {
     exports.Set(Napi::String::New(env, "UpdateWorkspace"), Napi::Function::New(env, UpdateWorkspace));
     exports.Set(Napi::String::New(env, "SetupWatchdog"), Napi::Function::New(env, SetupWatchdog));
     exports.Set(Napi::String::New(env, "SearchSubstring"), Napi::Function::New(env, SearchSubstring));
     exports.Set(Napi::String::New(env, "SearchPathSubstring"), Napi::Function::New(env, SearchPathSubstring));
+    exports.Set(Napi::String::New(env, "SearchFuzzy"), Napi::Function::New(env, SearchFuzzy));
     return exports;
 }
 

@@ -12,7 +12,7 @@ public:
     std::vector<char> pool;
     std::unordered_map<std::string, uint32_t, StringHash, std::equal_to<>> lookup;
 
-    uint32_t get_or_add(std::string_view s) {
+    uint32_t get_or_add(const std::string_view s) {
         const auto it = lookup.find(s);
         if (it != lookup.end()) return it->second;
 

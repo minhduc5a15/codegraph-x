@@ -17,8 +17,8 @@ public:
         const char* source_code,
         std::vector<ParallelParsingEngine::TempNodeRecord>& local_nodes,
         std::vector<ParallelParsingEngine::UnresolvedEdge>& local_edges,
-        const struct TSQuery* call_query,
-        struct TSQueryCursor* query_cursor,
+        const TSQuery* call_query,
+        TSQueryCursor* query_cursor,
         StringPool& local_pool
     );
 };

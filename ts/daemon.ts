@@ -93,7 +93,7 @@ async function main() {
           let result = null;
           if (graph) {
             if (req.action === 'explore_flow') {
-              result = graph.exploreFlow(req.symbols || []);
+              result = graph.exploreFlow(req.query || "");
             } else if (req.action === 'read_node') {
               if (typeof req.node_id !== 'number') {
                 result = '*(Invalid request: node_id must be a number)*';

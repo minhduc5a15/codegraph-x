@@ -159,9 +159,7 @@ async function main() {
         const query = typeof args?.query === 'string' ? args.query : '';
         if (!query.trim()) throw new Error('Invalid query parameter');
 
-        // Split natural language into simple tokens for the C++ engine to handle for now
-        const symbols = query.split(/\s+/).filter(Boolean);
-        const nodes: any[] = await rpcCall('explore_flow', { symbols });
+        const nodes: any[] = await rpcCall('explore_flow', { query });
 
         const outputText = await formatXRayResult(nodes, process.cwd());
 

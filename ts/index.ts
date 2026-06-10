@@ -56,3 +56,7 @@ export function searchSubstring(query: string): number[] {
 export function searchPathSubstring(query: string): number[] {
   return addon.SearchPathSubstring(query);
 }
+
+export function searchFuzzy(query: string): number[] {
+  return addon.SearchFuzzy(query);
+}

@@ -15,7 +15,7 @@ private:
     std::vector<Slot> table;
     size_t capacity;
     static constexpr uint32_t EMPTY_KEY = 0xFFFFFFFF;
-    inline size_t hash_int(uint32_t x) const { return (x * GOLDEN_RATIO_HASH) % capacity; }
+    inline size_t hash_int(const uint32_t x) const { return (x * GOLDEN_RATIO_HASH) % capacity; }
 
 public:
     explicit FlatSymbolMultiMap(const size_t expected_size) {

@@ -267,28 +267,21 @@ export class Codegraph {
     return callers;
   }
 
-  public exploreFlow(symbols: string[], maxDepth: number = 3): any[] {
+  public exploreFlow(query: string, maxDepth: number = 3): any[] {
     const visited = new Set<number>();
     const flowGraph: any[] = [];
     const queue: { id: number; depth: number }[] = [];
 
-    // Find starting nodes
-    for (const sym of symbols) {
-      const nodes = this.searchNodesByName(sym);
-      let addedCount = 0;
-      for (const node of nodes) {
-        if (!visited.has(node.id)) {
-          visited.add(node.id);
-          queue.push({ id: node.id, depth: 0 });
-          addedCount++;
-          if (addedCount >= 50) break;
+    // Find starting nodes via C++ fuzzy search
+    if (_addon && _addon.SearchFuzzy) {
+      const startNodeIds: number[] = _addon.SearchFuzzy(query);
+      for (const id of startNodeIds) {
+        if (!visited.has(id)) {
+          visited.add(id);
+          queue.push({ id, depth: 0 });
+          if (queue.length >= 50) break;
         }
       }
-    }
-
-    // Safety limit on starting nodes
-    if (queue.length > 50) {
-      queue.length = 50;
     }
 
     let head = 0;

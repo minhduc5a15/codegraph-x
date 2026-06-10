@@ -84,8 +84,9 @@ std::vector<uint32_t> InMemoryGraphEngine::search_substring(const std::string_vi
     return results;
 }
 
-std::vector<uint32_t> InMemoryGraphEngine::search_path_substring(const std::string_view query, const size_t limit)
-    const {
+std::vector<uint32_t> InMemoryGraphEngine::search_path_substring(
+    const std::string_view query, const size_t limit
+) const {
     std::vector<uint32_t> results;
     if (query.empty()) return results;
     for (const auto& node : nodes) {
@@ -94,6 +95,78 @@ std::vector<uint32_t> InMemoryGraphEngine::search_path_substring(const std::stri
             if (results.size() >= limit) break;
         }
     }
+    return results;
+}
+
+std::vector<uint32_t> InMemoryGraphEngine::search_fuzzy(const std::string_view query, const size_t limit) const {
+    std::vector<uint32_t> results;
+    if (query.empty()) return results;
+
+    // 1. Lowercase the query (single allocation, outside hot loop)
+    std::string query_lower(query);
+    for (auto& c : query_lower) {
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
+
+    // 2. Tokenize into string_views pointing into query_lower (zero-allocation)
+    std::vector<std::string_view> tokens;
+    {
+        size_t i = 0;
+        while (i < query_lower.size()) {
+            while (i < query_lower.size() && std::isspace(static_cast<unsigned char>(query_lower[i]))) ++i;
+            if (i >= query_lower.size()) break;
+            const size_t start = i;
+            while (i < query_lower.size() && !std::isspace(static_cast<unsigned char>(query_lower[i]))) ++i;
+            tokens.emplace_back(query_lower.data() + start, i - start);
+        }
+    }
+    if (tokens.empty()) return results;
+
+    // Case-insensitive substring search directly on string_view (zero-allocation)
+    auto ci_find = [](const std::string_view haystack, const std::string_view needle) -> bool {
+        if (needle.size() > haystack.size()) return false;
+        return std::ranges::search(haystack, needle, [](const char a, const char b) {
+                   return std::tolower(static_cast<unsigned char>(a)) == b;
+               }).begin() != haystack.end();
+    };
+
+    // 3. Score each node (zero-allocation inner loop)
+    struct ScoredNode {
+        uint32_t id;
+        int score;
+    };
+    std::vector<ScoredNode> candidates;
+    candidates.reserve(std::min(nodes.size(), static_cast<size_t>(1024)));
+
+    for (const auto& node : nodes) {
+        const std::string_view node_name = resolve_string(node.name_pool_offset);
+        const std::string_view node_path = resolve_string(node.path_pool_offset);
+
+        int score = 0;
+        for (const auto& token : tokens) {
+            if (ci_find(node_name, token)) {
+                score += 2;
+            }
+            if (ci_find(node_path, token)) {
+                score += 1;
+            }
+        }
+
+        if (score > 0) {
+            candidates.push_back({node.node_id, score});
+        }
+    }
+
+    // 4. Sort descending by score
+    std::ranges::sort(candidates, [](const ScoredNode& a, const ScoredNode& b) { return a.score > b.score; });
+
+    // 5. Return top `limit` node IDs
+    const size_t count = std::min(candidates.size(), limit);
+    results.reserve(count);
+    for (size_t i = 0; i < count; ++i) {
+        results.push_back(candidates[i].id);
+    }
+
     return results;
 }
 

@@ -38,6 +38,7 @@ struct StringHash {
 };
 
 class InMemoryGraphEngine {
+private:
     std::vector<NodeRecord> nodes;
     std::vector<uint32_t> offsets;
     std::vector<EdgeRecord> edges;
@@ -78,6 +79,7 @@ public:
 
     std::vector<uint32_t> search_substring(std::string_view query, size_t limit = 100) const;
     std::vector<uint32_t> search_path_substring(std::string_view query, size_t limit = 100) const;
+    std::vector<uint32_t> search_fuzzy(std::string_view query, size_t limit = 50) const;
 
     inline std::pair<const EdgeRecord*, size_t> get_adjacent_edges(const uint32_t node_id) const {
         if (!is_frozen || node_id >= nodes.size()) {
