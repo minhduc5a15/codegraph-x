@@ -20,6 +20,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -41,8 +42,21 @@ jobs:
       - name: Create optional package
         run: node scripts/build-optional-pkg.js
 
+      - name: Check for version tag
+        id: check_tag
+        shell: bash
+        run: |
+          VERSION_TAG=$(git tag --points-at HEAD | grep '^v' | head -n 1)
+          if [ -n "$VERSION_TAG" ]; then
+            echo "has_tag=true" >> "$GITHUB_OUTPUT"
+            echo "Detected version tag: $VERSION_TAG"
+          else
+            echo "has_tag=false" >> "$GITHUB_OUTPUT"
+            echo "No version tag on HEAD"
+          fi
+
       - name: Publish optional package
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: steps.check_tag.outputs.has_tag == 'true'
         shell: bash
         run: |
           cd npm/*
@@ -60,24 +74,41 @@ jobs:
     needs: build
     name: Publish core package
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check for version tag
+        id: check_tag
+        run: |
+          VERSION_TAG=$(git tag --points-at HEAD | grep '^v' | head -n 1)
+          if [ -n "$VERSION_TAG" ]; then
+            echo "has_tag=true" >> "$GITHUB_OUTPUT"
+            echo "Detected version tag: $VERSION_TAG"
+          else
+            echo "has_tag=false" >> "$GITHUB_OUTPUT"
+            echo "No version tag on HEAD — skipping publish"
+          fi
 
       - name: Setup Node.js
+        if: steps.check_tag.outputs.has_tag == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: 24
           registry-url: 'https://registry.npmjs.org'
 
       - name: Install dependencies
+        if: steps.check_tag.outputs.has_tag == 'true'
         run: npm install
 
       - name: Build TypeScript
+        if: steps.check_tag.outputs.has_tag == 'true'
         run: npm run build:ts
 
       - name: Publish core package
+        if: steps.check_tag.outputs.has_tag == 'true'
         run: |
           PKG_NAME=$(jq -r .name package.json)
           PKG_VERSION=$(jq -r .version package.json)
