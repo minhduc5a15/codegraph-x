@@ -17,9 +17,9 @@ public:
     UpdateWorkspaceWorker(Napi::Env& env, std::vector<std::string> files)
         : Napi::AsyncWorker(env), files(std::move(files)), promise(Napi::Promise::Deferred::New(env)) {}
 
-    ~UpdateWorkspaceWorker() {}
+    ~UpdateWorkspaceWorker() override = default;
 
-    Napi::Promise GetPromise() { return promise.Promise(); }
+    Napi::Promise GetPromise() const { return promise.Promise(); }
 
 protected:
     void Execute() override {
@@ -31,15 +31,18 @@ protected:
 
         engine = std::make_shared<InMemoryGraphEngine>();
 
-        auto temp_nodes = global_parser->take_nodes();
+        auto [pool, lookup] = global_parser->take_string_pool();
+        engine->take_string_pool(std::move(pool), std::move(lookup));
+
+        const auto temp_nodes = global_parser->take_nodes();
         std::vector<NodeRecord> raw_nodes;
         raw_nodes.reserve(temp_nodes.size());
 
         for (const auto& tn : temp_nodes) {
-            NodeRecord nr;
+            NodeRecord nr{};
             nr.node_id = tn.node_id;
-            nr.name_pool_offset = engine->register_string(tn.name);
-            nr.path_pool_offset = engine->register_string(tn.path);
+            nr.name_pool_offset = tn.name_offset;
+            nr.path_pool_offset = tn.path_offset;
             nr.start_line = tn.start_line;
             nr.end_line = tn.end_line;
             nr.type = tn.type;
@@ -63,7 +66,14 @@ protected:
             auto* hint = new std::shared_ptr<InMemoryGraphEngine>(engine);
 
             auto buffer = Napi::ArrayBuffer::New(
-                env, data, bytes, [](Napi::Env /*env*/, void* /*data*/, std::shared_ptr<InMemoryGraphEngine>* hint_ptr) { delete hint_ptr; }, hint);
+                env,
+                data,
+                bytes,
+                [](Napi::Env /*env*/, void* /*data*/, std::shared_ptr<InMemoryGraphEngine>* hint_ptr) {
+                    delete hint_ptr;
+                },
+                hint
+            );
             result.Set(key, buffer);
         };
 
@@ -71,8 +81,9 @@ protected:
         create_buffer("offsets", engine->get_offsets_data(), engine->get_offsets_bytes());
         create_buffer("edges", engine->get_edges_data(), engine->get_edges_bytes());
         create_buffer("stringPool", engine->get_string_pool_data(), engine->get_string_pool_bytes());
-        
+
         create_buffer("nameIndex", engine->get_name_index_data(), engine->get_name_index_bytes());
+        create_buffer("shortNameIndex", engine->get_short_name_index_data(), engine->get_short_name_index_bytes());
         create_buffer("pathIndex", engine->get_path_index_data(), engine->get_path_index_bytes());
         create_buffer("incomingOffsets", engine->get_incoming_offsets_data(), engine->get_incoming_offsets_bytes());
         create_buffer("incomingEdges", engine->get_incoming_edges_data(), engine->get_incoming_edges_bytes());
@@ -128,8 +139,8 @@ Napi::Value SearchSubstring(const Napi::CallbackInfo& info) {
         Napi::TypeError::New(env, "Expected a string query").ThrowAsJavaScriptException();
         return env.Null();
     }
-    std::string query = info[0].As<Napi::String>().Utf8Value();
-    auto results = global_engine->search_substring(query);
+    const std::string query = info[0].As<Napi::String>().Utf8Value();
+    const auto results = global_engine->search_substring(query);
     Napi::Array js_results = Napi::Array::New(env, results.size());
     for (size_t i = 0; i < results.size(); ++i) {
         js_results.Set(i, Napi::Number::New(env, results[i]));
@@ -146,8 +157,8 @@ Napi::Value SearchPathSubstring(const Napi::CallbackInfo& info) {
         Napi::TypeError::New(env, "Expected a string query").ThrowAsJavaScriptException();
         return env.Null();
     }
-    std::string query = info[0].As<Napi::String>().Utf8Value();
-    auto results = global_engine->search_path_substring(query);
+    const std::string query = info[0].As<Napi::String>().Utf8Value();
+    const auto results = global_engine->search_path_substring(query);
     Napi::Array js_results = Napi::Array::New(env, results.size());
     for (size_t i = 0; i < results.size(); ++i) {
         js_results.Set(i, Napi::Number::New(env, results[i]));

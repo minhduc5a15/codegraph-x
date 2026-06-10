@@ -3,9 +3,10 @@
 #include <iostream>
 
 #if defined(__linux__)
-#include <csignal>
 #include <sys/prctl.h>
 #include <unistd.h>
+
+#include <csignal>
 #elif defined(_WIN32)
 #include <windows.h>
 
