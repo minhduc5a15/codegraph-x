@@ -2,8 +2,13 @@
 
 #include <tree_sitter/api.h>
 
+#include <algorithm>
+#include <atomic>
 #include <cstring>
 #include <fstream>
+#include <iostream>
+#include <ranges>
+#include <unordered_set>
 
 extern "C" const TSLanguage* tree_sitter_cpp();
 
@@ -13,7 +18,7 @@ public:
         std::ifstream file(file_path, std::ios::binary | std::ios::ate);
         if (!file.is_open()) return;
 
-        std::streamsize size = file.tellg();
+        const std::streamsize size = file.tellg();
         if (size <= 0) return;
 
         file.seekg(0, std::ios::beg);
@@ -31,11 +36,6 @@ private:
     std::vector<char> buffer;
     bool valid = false;
 };
-
-#include <unordered_set>
-#include <algorithm>
-#include <iostream>
-#include <atomic>
 
 ParallelParsingEngine::~ParallelParsingEngine() {
     {
@@ -66,9 +66,9 @@ void ParallelParsingEngine::execute(const std::vector<std::string>& files_to_par
     // Remove Stale Data
     {
         std::lock_guard<std::mutex> lock(map_mutex);
-        std::unordered_set<std::string> valid_files(files_to_parse.begin(), files_to_parse.end());
+        const std::unordered_set<std::string> valid_files(files_to_parse.begin(), files_to_parse.end());
         for (auto it = file_data_map.begin(); it != file_data_map.end();) {
-            if (valid_files.find(it->first) == valid_files.end()) {
+            if (!valid_files.contains(it->first)) {
                 it = file_data_map.erase(it);
             } else {
                 ++it;
@@ -82,7 +82,7 @@ void ParallelParsingEngine::execute(const std::vector<std::string>& files_to_par
         for (const auto& file : files_to_parse) {
             task_queue.push(file);
         }
-        active_tasks = files_to_parse.size();
+        active_tasks = static_cast<int>(files_to_parse.size());
     }
 
     if (files_to_parse.empty()) return;
@@ -100,7 +100,7 @@ void ParallelParsingEngine::worker_thread_func() {
 
     uint32_t error_offset;
     TSQueryError error_type;
-    const char* query_src = 
+    const char* query_src =
         "(call_expression function: (identifier) @target)\n"
         "(call_expression function: (field_expression field: (field_identifier) @target))\n"
         "(call_expression function: (qualified_identifier) @target)";
@@ -170,15 +170,15 @@ void ParallelParsingEngine::build_flat_graph() {
 
     std::vector<std::pair<FileData*, uint32_t>> file_tasks;
 
-    for (auto& pair : file_data_map) {
-        auto& data = pair.second;
-        file_tasks.push_back({&data, current_id});
+    for (auto& val : file_data_map | std::views::values) {
+        auto& data = val;
+        file_tasks.emplace_back(&data, current_id);
         for (const auto& n : data.nodes) {
             TempNodeRecord updated_node = n;
             updated_node.node_id = current_id;
             if (n.type == NodeType::FUNCTION || n.type == NodeType::CLASS || n.type == NodeType::METHOD) {
                 if (!n.name.empty()) {
-                    global_symbols.push_back({n.name, current_id});
+                    global_symbols.emplace_back(n.name, current_id);
                 }
             }
             global_nodes.push_back(updated_node);
@@ -186,40 +186,37 @@ void ParallelParsingEngine::build_flat_graph() {
         }
     }
 
-    std::sort(global_symbols.begin(), global_symbols.end(), [](const auto& a, const auto& b) {
-        return a.first < b.first;
-    });
+    std::ranges::sort(global_symbols, [](const auto& a, const auto& b) { return a.first < b.first; });
 
-    auto resolve_worker = [this, &global_symbols](FileData* data, uint32_t local_offset) {
+    auto resolve_worker = [this, &global_symbols](FileData* data, const uint32_t local_offset) {
         data->resolved_edges.clear();
         data->resolved_external_nodes.clear();
-        for (const auto& e : data->edges) {
-            uint32_t absolute_source_id = e.source_node_id + local_offset;
+        for (const auto& [source_node_id, target_symbol, type] : data->edges) {
+            const uint32_t absolute_source_id = source_node_id + local_offset;
             const auto& source_node = global_nodes[absolute_source_id];
 
             std::vector<std::string> search_scopes;
-            search_scopes.push_back(e.target_symbol);
+            search_scopes.push_back(target_symbol);
 
-            std::string prefix = "";
+            std::string prefix;
             for (const auto& scope : source_node.enclosing_scopes) {
                 prefix += scope + "::";
-                search_scopes.push_back(prefix + e.target_symbol);
+                search_scopes.push_back(prefix + target_symbol);
             }
 
             bool resolved = false;
-            for (auto it = search_scopes.rbegin(); it != search_scopes.rend(); ++it) {
-                const std::string& target = *it;
-                
-                auto range = std::equal_range(global_symbols.begin(), global_symbols.end(), std::pair<std::string, uint32_t>{target, 0},
-                    [](const auto& a, const auto& b) { return a.first < b.first; });
+            for (auto& target : std::views::reverse(search_scopes)) {
+                auto [begin_match, end_match] =
+                    std::equal_range(global_symbols.begin(), global_symbols.end(), std::pair<std::string, uint32_t>{target, 0},
+                                     [](const auto& a, const auto& b) { return a.first < b.first; });
 
-                if (range.first != range.second) {
+                if (begin_match != end_match) {
                     resolved = true;
-                    size_t match_count = std::distance(range.first, range.second);
-                    EdgeType edge_type = (match_count > 1 && e.type == EdgeType::CALLS) ? EdgeType::AMBIGUOUS_CALL : e.type;
+                    const size_t match_count = std::distance(begin_match, end_match);
+                    const EdgeType edge_type = (match_count > 1 && type == EdgeType::CALLS) ? EdgeType::AMBIGUOUS_CALL : type;
 
-                    for (auto match_it = range.first; match_it != range.second; ++match_it) {
-                        RawEdge new_edge;
+                    for (auto match_it = begin_match; match_it != end_match; ++match_it) {
+                        RawEdge new_edge{};
                         new_edge.source_node_id = absolute_source_id;
                         new_edge.target_node_id = match_it->second;
                         new_edge.type = edge_type;
@@ -232,16 +229,16 @@ void ParallelParsingEngine::build_flat_graph() {
             if (!resolved) {
                 TempNodeRecord external_node;
                 external_node.node_id = 0;
-                external_node.name = e.target_symbol;
+                external_node.name = target_symbol;
                 external_node.path = "external";
                 external_node.start_line = 0;
                 external_node.end_line = 0;
                 external_node.type = NodeType::EXTERNAL;
 
-                RawEdge new_edge;
+                RawEdge new_edge{};
                 new_edge.source_node_id = absolute_source_id;
                 new_edge.target_node_id = 0;
-                new_edge.type = e.type;
+                new_edge.type = type;
 
                 data->resolved_external_nodes.push_back({data->resolved_edges.size(), external_node});
                 data->resolved_edges.push_back(new_edge);
@@ -257,7 +254,7 @@ void ParallelParsingEngine::build_flat_graph() {
     for (unsigned int i = 0; i < thread_count; ++i) {
         resolve_threads.emplace_back([&]() {
             while (true) {
-                size_t idx = task_index.fetch_add(1);
+                const size_t idx = task_index.fetch_add(1);
                 if (idx >= file_tasks.size()) break;
                 resolve_worker(file_tasks[idx].first, file_tasks[idx].second);
             }
@@ -268,54 +265,51 @@ void ParallelParsingEngine::build_flat_graph() {
         t.join();
     }
 
-    for (auto& task : file_tasks) {
-        FileData* data = task.first;
-        for (auto& ext : data->resolved_external_nodes) {
-            uint32_t new_id = current_id++;
-            ext.node.node_id = new_id;
-            global_nodes.push_back(ext.node);
-            data->resolved_edges[ext.edge_index].target_node_id = new_id;
+    for (const auto& key : file_tasks | std::views::keys) {
+        FileData* data = key;
+        for (auto& [edge_index, node] : data->resolved_external_nodes) {
+            const uint32_t new_id = current_id++;
+            node.node_id = new_id;
+            global_nodes.push_back(node);
+            data->resolved_edges[edge_index].target_node_id = new_id;
         }
 
-        std::sort(data->resolved_edges.begin(), data->resolved_edges.end(), [](const RawEdge& a, const RawEdge& b) {
+        std::ranges::sort(data->resolved_edges, [](const RawEdge& a, const RawEdge& b) {
             if (a.source_node_id != b.source_node_id) return a.source_node_id < b.source_node_id;
             if (a.target_node_id != b.target_node_id) return a.target_node_id < b.target_node_id;
             return a.type < b.type;
         });
-        auto last = std::unique(data->resolved_edges.begin(), data->resolved_edges.end(), [](const RawEdge& a, const RawEdge& b) {
-            return a.source_node_id == b.source_node_id && a.target_node_id == b.target_node_id && a.type == b.type;
-        });
+        auto last = std::ranges::unique(data->resolved_edges, [](const RawEdge& a, const RawEdge& b) {
+                        return a.source_node_id == b.source_node_id && a.target_node_id == b.target_node_id && a.type == b.type;
+                    }).begin();
         data->resolved_edges.erase(last, data->resolved_edges.end());
 
         global_edges.insert(global_edges.end(), data->resolved_edges.begin(), data->resolved_edges.end());
     }
 }
 
-static std::string get_node_text(TSNode node, const char* source_code) {
-    uint32_t start = ts_node_start_byte(node);
-    uint32_t end = ts_node_end_byte(node);
+static std::string get_node_text(const TSNode& node, const char* source_code) {
+    const uint32_t start = ts_node_start_byte(node);
+    const uint32_t end = ts_node_end_byte(node);
     if (end > start) {
-        return std::string(source_code + start, end - start);
+        return std::string{source_code + start, end - start};
     }
     return "";
 }
 
-static TSNode get_declarator_name(TSNode node) {
+static TSNode get_declarator_name(const TSNode& node) {
     const char* type = ts_node_type(node);
-    if (strcmp(type, "identifier") == 0 || 
-        strcmp(type, "field_identifier") == 0 ||
-        strcmp(type, "type_identifier") == 0 ||
+    if (strcmp(type, "identifier") == 0 || strcmp(type, "field_identifier") == 0 || strcmp(type, "type_identifier") == 0 ||
         strcmp(type, "qualified_identifier") == 0) {
         return node;
     }
-    uint32_t child_count = ts_node_child_count(node);
+    const uint32_t child_count = ts_node_child_count(node);
     for (uint32_t i = 0; i < child_count; ++i) {
         TSNode child = ts_node_child(node, i);
-        TSNode found = get_declarator_name(child);
+        const TSNode found = get_declarator_name(child);
         if (!ts_node_is_null(found)) return found;
     }
-    TSNode null_node;
-    std::memset(&null_node, 0, sizeof(null_node));
+    constexpr TSNode null_node = {};
     return null_node;
 }
 
@@ -337,27 +331,30 @@ void ParallelParsingEngine::process_syntax_tree(TSTree* tree, const std::string&
 
     struct State {
         uint32_t node_id;
-        std::string fqn_prefix;
-        std::vector<std::string> enclosing_scopes;
-        bool created_scope;
+        bool pushed_scope;
+        size_t prev_prefix_len;
     };
     std::vector<State> state_stack;
-    state_stack.push_back({file_node.node_id, "", {}, false});
+    state_stack.push_back({file_node.node_id, false, 0});
+
+    std::string global_fqn_prefix;
+    std::vector<std::string> global_scopes;
 
     while (!reached_root) {
         TSNode current = ts_tree_cursor_current_node(&cursor);
         const char* type = ts_node_type(current);
 
-        State current_state = state_stack.back();
-        bool created_scope = false;
+        uint32_t current_node_id = state_stack.back().node_id;
+        bool pushed_scope = false;
+        size_t prev_prefix_len = global_fqn_prefix.size();
 
         if (strcmp(type, "namespace_definition") == 0) {
             TSNode id_node = ts_node_child_by_field_name(current, "name", 4);
             if (!ts_node_is_null(id_node)) {
                 std::string ns_name = get_node_text(id_node, source_code);
-                current_state.fqn_prefix += ns_name + "::";
-                current_state.enclosing_scopes.push_back(ns_name);
-                created_scope = true;
+                global_fqn_prefix += ns_name + "::";
+                global_scopes.push_back(ns_name);
+                pushed_scope = true;
             }
         } else if (strcmp(type, "class_specifier") == 0 || strcmp(type, "struct_specifier") == 0) {
             TSNode id_node = ts_node_child_by_field_name(current, "name", 4);
@@ -366,17 +363,17 @@ void ParallelParsingEngine::process_syntax_tree(TSTree* tree, const std::string&
 
                 TempNodeRecord class_node;
                 class_node.node_id = static_cast<uint32_t>(local_nodes.size());
-                class_node.name = current_state.fqn_prefix + class_name;
+                class_node.name = global_fqn_prefix + class_name;
                 class_node.path = file_path;
                 class_node.start_line = ts_node_start_point(current).row + 1;
                 class_node.end_line = ts_node_end_point(current).row + 1;
                 class_node.type = NodeType::CLASS;
-                class_node.enclosing_scopes = current_state.enclosing_scopes;
+                class_node.enclosing_scopes = global_scopes;
 
-                current_state.node_id = class_node.node_id;
-                current_state.fqn_prefix += class_name + "::";
-                current_state.enclosing_scopes.push_back(class_name);
-                created_scope = true;
+                current_node_id = class_node.node_id;
+                global_fqn_prefix += class_name + "::";
+                global_scopes.push_back(class_name);
+                pushed_scope = true;
                 local_nodes.push_back(class_node);
 
                 TSNode base_clause = ts_node_child_by_field_name(current, "base_class_clause", 17);
@@ -389,7 +386,7 @@ void ParallelParsingEngine::process_syntax_tree(TSTree* tree, const std::string&
                         }
                     }
                 }
-                
+
                 if (!ts_node_is_null(base_clause)) {
                     uint32_t child_count = ts_node_child_count(base_clause);
                     for (uint32_t i = 0; i < child_count; ++i) {
@@ -413,15 +410,14 @@ void ParallelParsingEngine::process_syntax_tree(TSTree* tree, const std::string&
 
                 TempNodeRecord fn_node;
                 fn_node.node_id = static_cast<uint32_t>(local_nodes.size());
-                fn_node.name = current_state.fqn_prefix + func_name;
+                fn_node.name = global_fqn_prefix + func_name;
                 fn_node.path = file_path;
                 fn_node.start_line = ts_node_start_point(current).row + 1;
                 fn_node.end_line = ts_node_end_point(current).row + 1;
                 fn_node.type = NodeType::FUNCTION;
-                fn_node.enclosing_scopes = current_state.enclosing_scopes;
+                fn_node.enclosing_scopes = global_scopes;
 
-                current_state.node_id = fn_node.node_id;
-                created_scope = true;
+                current_node_id = fn_node.node_id;
                 local_nodes.push_back(fn_node);
             }
         } else if (strcmp(type, "call_expression") == 0) {
@@ -431,7 +427,7 @@ void ParallelParsingEngine::process_syntax_tree(TSTree* tree, const std::string&
                 if (match.capture_count > 0) {
                     TSNode id_node = match.captures[0].node;
                     UnresolvedEdge edge;
-                    edge.source_node_id = current_state.node_id;
+                    edge.source_node_id = current_node_id;
                     edge.target_symbol = get_node_text(id_node, source_code);
                     edge.type = EdgeType::CALLS;
                     local_edges.push_back(edge);
@@ -439,11 +435,14 @@ void ParallelParsingEngine::process_syntax_tree(TSTree* tree, const std::string&
             }
         }
 
-        current_state.created_scope = created_scope;
-
         if (ts_tree_cursor_goto_first_child(&cursor)) {
-            state_stack.push_back(current_state);
+            state_stack.push_back({current_node_id, pushed_scope, prev_prefix_len});
             continue;
+        }
+
+        if (pushed_scope) {
+            global_scopes.pop_back();
+            global_fqn_prefix.resize(prev_prefix_len);
         }
 
         if (ts_tree_cursor_goto_next_sibling(&cursor)) {
@@ -454,6 +453,12 @@ void ParallelParsingEngine::process_syntax_tree(TSTree* tree, const std::string&
             if (!ts_tree_cursor_goto_parent(&cursor)) {
                 reached_root = true;
                 break;
+            }
+
+            const State& st = state_stack.back();
+            if (st.pushed_scope) {
+                global_scopes.pop_back();
+                global_fqn_prefix.resize(st.prev_prefix_len);
             }
             state_stack.pop_back();
         } while (!ts_tree_cursor_goto_next_sibling(&cursor));

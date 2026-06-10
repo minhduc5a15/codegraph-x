@@ -3,7 +3,7 @@
 #include <iostream>
 
 #if defined(__linux__)
-#include <signal.h>
+#include <csignal>
 #include <sys/prctl.h>
 #include <unistd.h>
 #elif defined(_WIN32)

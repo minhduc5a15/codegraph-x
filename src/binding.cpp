@@ -10,6 +10,7 @@
 #include "watchdog.hpp"
 
 std::shared_ptr<ParallelParsingEngine> global_parser = nullptr;
+std::shared_ptr<InMemoryGraphEngine> global_engine = nullptr;
 
 class UpdateWorkspaceWorker : public Napi::AsyncWorker {
 public:
@@ -70,6 +71,13 @@ protected:
         create_buffer("offsets", engine->get_offsets_data(), engine->get_offsets_bytes());
         create_buffer("edges", engine->get_edges_data(), engine->get_edges_bytes());
         create_buffer("stringPool", engine->get_string_pool_data(), engine->get_string_pool_bytes());
+        
+        create_buffer("nameIndex", engine->get_name_index_data(), engine->get_name_index_bytes());
+        create_buffer("pathIndex", engine->get_path_index_data(), engine->get_path_index_bytes());
+        create_buffer("incomingOffsets", engine->get_incoming_offsets_data(), engine->get_incoming_offsets_bytes());
+        create_buffer("incomingEdges", engine->get_incoming_edges_data(), engine->get_incoming_edges_bytes());
+
+        global_engine = engine;
 
         promise.Resolve(result);
     }
@@ -111,9 +119,47 @@ Napi::Value SetupWatchdog(const Napi::CallbackInfo& info) {
     return env.Undefined();
 }
 
+Napi::Value SearchSubstring(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    if (!global_engine) {
+        return Napi::Array::New(env, 0);
+    }
+    if (info.Length() < 1 || !info[0].IsString()) {
+        Napi::TypeError::New(env, "Expected a string query").ThrowAsJavaScriptException();
+        return env.Null();
+    }
+    std::string query = info[0].As<Napi::String>().Utf8Value();
+    auto results = global_engine->search_substring(query);
+    Napi::Array js_results = Napi::Array::New(env, results.size());
+    for (size_t i = 0; i < results.size(); ++i) {
+        js_results.Set(i, Napi::Number::New(env, results[i]));
+    }
+    return js_results;
+}
+
+Napi::Value SearchPathSubstring(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    if (!global_engine) {
+        return Napi::Array::New(env, 0);
+    }
+    if (info.Length() < 1 || !info[0].IsString()) {
+        Napi::TypeError::New(env, "Expected a string query").ThrowAsJavaScriptException();
+        return env.Null();
+    }
+    std::string query = info[0].As<Napi::String>().Utf8Value();
+    auto results = global_engine->search_path_substring(query);
+    Napi::Array js_results = Napi::Array::New(env, results.size());
+    for (size_t i = 0; i < results.size(); ++i) {
+        js_results.Set(i, Napi::Number::New(env, results[i]));
+    }
+    return js_results;
+}
+
 Napi::Object InitAll(Napi::Env env, Napi::Object exports) {
     exports.Set(Napi::String::New(env, "UpdateWorkspace"), Napi::Function::New(env, UpdateWorkspace));
     exports.Set(Napi::String::New(env, "SetupWatchdog"), Napi::Function::New(env, SetupWatchdog));
+    exports.Set(Napi::String::New(env, "SearchSubstring"), Napi::Function::New(env, SearchSubstring));
+    exports.Set(Napi::String::New(env, "SearchPathSubstring"), Napi::Function::New(env, SearchPathSubstring));
     return exports;
 }
 

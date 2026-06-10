@@ -39,6 +39,10 @@ private:
     std::vector<EdgeRecord> edges;
     std::vector<char> string_pool;
     std::unordered_map<std::string, uint32_t> string_lookup;
+    std::vector<uint32_t> name_index;
+    std::vector<uint32_t> path_index;
+    std::vector<uint32_t> incoming_offsets;
+    std::vector<uint32_t> incoming_edges;
     bool is_frozen = false;
 
 public:
@@ -55,20 +59,23 @@ public:
 
     void build_from_raw(std::vector<NodeRecord>&& raw_nodes, const std::vector<RawEdge>& raw_edges);
 
-    inline std::pair<const EdgeRecord*, size_t> get_adjacent_edges(uint32_t node_id) const {
+    std::vector<uint32_t> search_substring(std::string_view query, size_t limit = 100) const;
+    std::vector<uint32_t> search_path_substring(std::string_view query, size_t limit = 100) const;
+
+    inline std::pair<const EdgeRecord*, size_t> get_adjacent_edges(const uint32_t node_id) const {
         if (!is_frozen || node_id >= nodes.size()) {
             return {nullptr, 0};
         }
-        uint32_t start_idx = offsets[node_id];
-        uint32_t end_idx = offsets[node_id + 1];
-        size_t count = end_idx - start_idx;
+        const uint32_t start_idx = offsets[node_id];
+        const uint32_t end_idx = offsets[node_id + 1];
+        const size_t count = end_idx - start_idx;
         if (count == 0) return {nullptr, 0};
         return {&edges[start_idx], count};
     }
 
     inline size_t get_node_count() const { return nodes.size(); }
 
-    inline const NodeRecord& get_node(uint32_t node_id) const {
+    inline const NodeRecord& get_node(const uint32_t node_id) const {
         if (node_id >= nodes.size()) {
             throw std::out_of_range("Node ID out of range");
         }
@@ -89,4 +96,16 @@ public:
 
     void* get_string_pool_data() { return string_pool.data(); }
     size_t get_string_pool_bytes() const { return string_pool.size() * sizeof(char); }
+
+    void* get_name_index_data() { return name_index.data(); }
+    size_t get_name_index_bytes() const { return name_index.size() * sizeof(uint32_t); }
+
+    void* get_path_index_data() { return path_index.data(); }
+    size_t get_path_index_bytes() const { return path_index.size() * sizeof(uint32_t); }
+
+    void* get_incoming_offsets_data() { return incoming_offsets.data(); }
+    size_t get_incoming_offsets_bytes() const { return incoming_offsets.size() * sizeof(uint32_t); }
+
+    void* get_incoming_edges_data() { return incoming_edges.data(); }
+    size_t get_incoming_edges_bytes() const { return incoming_edges.size() * sizeof(uint32_t); }
 };

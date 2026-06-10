@@ -42,11 +42,11 @@ public:
 private:
     void initialize_workers();
     void worker_thread_func();
-    void process_syntax_tree(TSTree* tree, const std::string& file_path, const char* source_code, std::vector<TempNodeRecord>& local_nodes,
-                             std::vector<UnresolvedEdge>& local_edges, struct TSQuery* call_query, struct TSQueryCursor* query_cursor);
+    static void process_syntax_tree(TSTree* tree, const std::string& file_path, const char* source_code, std::vector<TempNodeRecord>& local_nodes,
+                                    std::vector<UnresolvedEdge>& local_edges, struct TSQuery* call_query, struct TSQueryCursor* query_cursor);
 
     struct UnresolvedExternal {
-        size_t edge_index;
+        size_t edge_index{};
         TempNodeRecord node;
     };
 

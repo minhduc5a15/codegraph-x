@@ -1,4 +1,4 @@
-import { Codegraph, GraphData } from "./codegraph.js";
+import { Codegraph, GraphData, setNativeAddon } from "./codegraph.js";
 import { platform, arch } from "os";
 import { join } from "path";
 
@@ -38,6 +38,10 @@ try {
   }
 }
 
+if (addon) {
+  setNativeAddon(addon);
+}
+
 export function setupWatchdog(ppid: number) {
   addon.SetupWatchdog(ppid);
 }
@@ -45,4 +49,12 @@ export function setupWatchdog(ppid: number) {
 export async function updateWorkspace(files: string[]): Promise<Codegraph> {
   const rawData: GraphData = await addon.UpdateWorkspace(files);
   return new Codegraph(rawData);
+}
+
+export function searchSubstring(query: string): number[] {
+  return addon.SearchSubstring(query);
+}
+
+export function searchPathSubstring(query: string): number[] {
+  return addon.SearchPathSubstring(query);
 }

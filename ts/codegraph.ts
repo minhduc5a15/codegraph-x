@@ -6,6 +6,11 @@ export enum NodeType {
   EXTERNAL = 4,
 }
 
+let _addon: any = null;
+export function setNativeAddon(addon: any) {
+  _addon = addon;
+}
+
 export enum EdgeType {
   CALLS = 0,
   INHERITS = 1,
@@ -18,6 +23,10 @@ export interface GraphData {
   offsets: ArrayBuffer;
   edges: ArrayBuffer;
   stringPool: ArrayBuffer;
+  nameIndex: ArrayBuffer;
+  pathIndex: ArrayBuffer;
+  incomingOffsets: ArrayBuffer;
+  incomingEdges: ArrayBuffer;
 }
 
 export class EdgeCursor {
@@ -45,124 +54,34 @@ export class Codegraph {
   private stringPool: Uint8Array;
   private textDecoder: TextDecoder;
   private sharedEdgeCursor: EdgeCursor;
-  private nameIndex: Map<string, number[]> = new Map();
-  private pathIndex: Map<string, number[]> = new Map();
-  private tokenIndex: Map<string, number[]> = new Map();
-  private incomingEdges: Map<number, number[]> = new Map();
+  private nameIndexView: Uint32Array;
+  private pathIndexView: Uint32Array;
+  private incomingOffsets: Uint32Array;
+  private incomingEdges: Uint32Array;
 
   constructor(data: GraphData) {
     this.nodesView = new DataView(data.nodes);
     this.offsets = new Uint32Array(data.offsets);
     this.edgesView = new DataView(data.edges);
     this.stringPool = new Uint8Array(data.stringPool);
+    this.nameIndexView = new Uint32Array(data.nameIndex);
+    this.pathIndexView = new Uint32Array(data.pathIndex);
+    this.incomingOffsets = new Uint32Array(data.incomingOffsets);
+    this.incomingEdges = new Uint32Array(data.incomingEdges);
     this.textDecoder = new TextDecoder("utf-8");
     this.sharedEdgeCursor = new EdgeCursor(this.edgesView);
-    this.buildIndex();
   }
 
-  private buildIndex(): void {
-    const count = this.nodeCount;
-    for (let i = 0; i < count; i++) {
-      const byteOffset = i * 24;
-      const name_pool_offset = this.nodesView.getUint32(byteOffset + 4, true);
-      const path_pool_offset = this.nodesView.getUint32(byteOffset + 8, true);
-      
-      const name = this.resolveString(name_pool_offset);
-      const path = this.resolveString(path_pool_offset);
-
-      if (name) {
-        let arr = this.nameIndex.get(name);
-        if (!arr) {
-          arr = [];
-          this.nameIndex.set(name, arr);
-        }
-        arr.push(i);
-
-        const tokens = this.tokenizeSymbol(name);
-        for (const token of tokens) {
-          let tArr = this.tokenIndex.get(token);
-          if (!tArr) {
-            tArr = [];
-            this.tokenIndex.set(token, tArr);
-          }
-          if (tArr.length === 0 || tArr[tArr.length - 1] !== i) {
-            tArr.push(i);
-          }
-        }
-      }
-
-      if (path) {
-        let arr = this.pathIndex.get(path);
-        if (!arr) {
-          arr = [];
-          this.pathIndex.set(path, arr);
-        }
-        arr.push(i);
-      }
-    }
-
-    const count2 = this.nodeCount;
-    for (let sourceId = 0; sourceId < count2; sourceId++) {
-      const startIdx = this.offsets[sourceId];
-      const endIdx = this.offsets[sourceId + 1];
-      for (let j = startIdx; j < endIdx; j++) {
-        const targetId = this.edgesView.getUint32(j * 8, true);
-        
-        let callers = this.incomingEdges.get(targetId);
-        if (!callers) {
-          callers = [];
-          this.incomingEdges.set(targetId, callers);
-        }
-        callers.push(sourceId);
-      }
-    }
+  private resolveNameForNode(nodeId: number): string {
+    const byteOffset = nodeId * 24;
+    const name_pool_offset = this.nodesView.getUint32(byteOffset + 4, true);
+    return this.resolveString(name_pool_offset);
   }
 
-  private tokenizeSymbol(name: string): string[] {
-    const step1 = name.replace(/[^a-zA-Z0-9]/g, ' ');
-    const step2 = step1.replace(/([a-z])([A-Z])/g, '$1 $2');
-    const tokens = step2.toLowerCase().split(/\s+/).filter(t => t.length > 0);
-    return Array.from(new Set(tokens));
-  }
-
-  private intersectSorted(arr1: number[], arr2: number[]): number[] {
-    const result: number[] = [];
-    let i = 0, j = 0;
-    while(i < arr1.length && j < arr2.length) {
-      if (arr1[i] < arr2[j]) i++;
-      else if (arr1[i] > arr2[j]) j++;
-      else {
-        result.push(arr1[i]);
-        i++;
-        j++;
-      }
-    }
-    return result;
-  }
-
-  private getTokenMatches(token: string): number[] {
-    const exactIds = this.tokenIndex.get(token);
-    if (exactIds) {
-      return exactIds;
-    }
-
-    if (token.length < 2) {
-      return [];
-    }
-      
-    // Fallback: substring scan over unique tokens
-    const matchedIds = new Set<number>();
-    for (const [key, ids] of this.tokenIndex.entries()) {
-      if (key.includes(token)) {
-        for (const id of ids) {
-          matchedIds.add(id);
-        }
-      }
-    }
-    
-    const result = Array.from(matchedIds);
-    result.sort((a, b) => a - b);
-    return result;
+  private resolvePathForNode(nodeId: number): string {
+    const byteOffset = nodeId * 24;
+    const path_pool_offset = this.nodesView.getUint32(byteOffset + 8, true);
+    return this.resolveString(path_pool_offset);
   }
 
   public resolveString(offset: number): string {
@@ -211,40 +130,58 @@ export class Codegraph {
   }
 
   public searchNodesByName(nameMatch: string): any[] {
-    const results = [];
-    const exactMatches = this.nameIndex.get(nameMatch);
-    if (exactMatches) {
-      for (const id of exactMatches) {
-        results.push(this.getNode(id));
-      }
-      return results;
-    }
+    const results: any[] = [];
+    if (!nameMatch) return results;
     
-    // Fast token index fallback with partial match support
-    const tokens = this.tokenizeSymbol(nameMatch);
-    if (tokens.length > 0) {
-      let candidateIds = this.getTokenMatches(tokens[0]);
-      for (let i = 1; i < tokens.length; i++) {
-        const nextIds = this.getTokenMatches(tokens[i]);
-        candidateIds = this.intersectSorted(candidateIds, nextIds);
-        if (candidateIds.length === 0) break;
-      }
+    let low = 0;
+    let high = this.nameIndexView.length - 1;
+    let firstMatchIdx = -1;
+
+    while (low <= high) {
+      const mid = (low + high) >>> 1;
+      const midId = this.nameIndexView[mid];
+      const midName = this.resolveNameForNode(midId);
       
-      for (const id of candidateIds) {
-        results.push(this.getNode(id));
-        if (results.length >= 100) break;
+      if (midName.startsWith(nameMatch)) {
+        firstMatchIdx = mid;
+        high = mid - 1; // Look left for the first occurrence
+      } else if (midName < nameMatch) {
+        low = mid + 1;
+      } else {
+        high = mid - 1;
       }
     }
-    
+
+    if (firstMatchIdx !== -1) {
+      for (let i = firstMatchIdx; i < this.nameIndexView.length && results.length < 100; i++) {
+        const id = this.nameIndexView[i];
+        const name = this.resolveNameForNode(id);
+        if (name.startsWith(nameMatch)) {
+          results.push(this.getNode(id));
+        } else {
+          break;
+        }
+      }
+    }
     return results;
   }
 
   public getNodesByFile(pathMatch: string): any[] {
-    const results = [];
-    for (const [path, ids] of this.pathIndex.entries()) {
-      if (path.includes(pathMatch)) {
-        for (const id of ids) {
+    const results: any[] = [];
+    if (!pathMatch) return results;
+    
+    if (_addon && _addon.SearchPathSubstring) {
+      const ids = _addon.SearchPathSubstring(pathMatch);
+      for (const id of ids) {
+        results.push(this.getNode(id));
+      }
+    } else {
+      for (let i = 0; i < this.pathIndexView.length; i++) {
+        const id = this.pathIndexView[i];
+        const path = this.resolvePathForNode(id);
+        if (path.includes(pathMatch)) {
           results.push(this.getNode(id));
+          if (results.length >= 100) break;
         }
       }
     }
@@ -258,34 +195,14 @@ export class Codegraph {
 
     // Find starting nodes
     for (const sym of symbols) {
-      const ids = this.nameIndex.get(sym);
-      if (ids) {
-        for (const id of ids) {
-          if (!visited.has(id)) {
-            visited.add(id);
-            queue.push({ id, depth: 0 });
-          }
-        }
-      } else {
-        // Fast token index fallback with partial match support
-        const tokens = this.tokenizeSymbol(sym);
-        if (tokens.length > 0) {
-          let candidateIds = this.getTokenMatches(tokens[0]);
-          for (let i = 1; i < tokens.length; i++) {
-            const nextIds = this.getTokenMatches(tokens[i]);
-            candidateIds = this.intersectSorted(candidateIds, nextIds);
-            if (candidateIds.length === 0) break;
-          }
-          
-          let addedCount = 0;
-          for (const id of candidateIds) {
-            if (!visited.has(id)) {
-              visited.add(id);
-              queue.push({ id, depth: 0 });
-              addedCount++;
-              if (addedCount >= 50) break; // Guard rail for starting nodes
-            }
-          }
+      const nodes = this.searchNodesByName(sym);
+      let addedCount = 0;
+      for (const node of nodes) {
+        if (!visited.has(node.id)) {
+          visited.add(node.id);
+          queue.push({ id: node.id, depth: 0 });
+          addedCount++;
+          if (addedCount >= 50) break;
         }
       }
     }
@@ -323,12 +240,15 @@ export class Codegraph {
         }
       }
       
-      const callersList = this.incomingEdges.get(id) || [];
       const callers = [];
-      for (const callerId of callersList) {
+      const callerStartIdx = id < this.incomingOffsets.length - 1 ? this.incomingOffsets[id] : 0;
+      const callerEndIdx = id < this.incomingOffsets.length - 1 ? this.incomingOffsets[id + 1] : 0;
+      
+      for (let i = callerStartIdx; i < callerEndIdx; i++) {
+        const callerId = this.incomingEdges[i];
         let callerName = "Unknown";
         try {
-          callerName = this.getNode(callerId).name;
+          callerName = this.resolveNameForNode(callerId);
         } catch (e) {}
         callers.push({
           sourceId: callerId,
