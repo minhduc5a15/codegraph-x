@@ -6,7 +6,12 @@ NamespaceIndentation: All
 FixNamespaceComments: true
 
 AccessModifierOffset: -4
-ColumnLimit: 150
+ColumnLimit: 120
+
+BinPackParameters: false
+BinPackArguments: false
+
+AlignAfterOpenBracket: BlockIndent
 
 BraceWrapping:
   AfterEnum: true
