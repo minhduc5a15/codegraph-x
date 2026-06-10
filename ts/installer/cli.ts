@@ -20,7 +20,7 @@ export async function runInstaller() {
     }
 
     const installConfirm = await p.confirm({
-      message: `Do you want to configure Codegraph-X for ${agent.name}?`
+      message: `Do you want to configure Codegraph-X for ${agent.name}?`,
     });
 
     if (p.isCancel(installConfirm)) {
@@ -36,8 +36,8 @@ export async function runInstaller() {
           message: `Where do you want to configure ${agent.name}?`,
           options: [
             { value: 'global', label: 'Global (User profile)' },
-            { value: 'local', label: 'Local (Current project)' }
-          ]
+            { value: 'local', label: 'Local (Current project)' },
+          ],
         });
         if (p.isCancel(scopeChoice)) {
           p.cancel('Installation cancelled.');

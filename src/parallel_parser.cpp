@@ -5,37 +5,15 @@
 #include <algorithm>
 #include <atomic>
 #include <cstring>
-#include <fstream>
 #include <iostream>
 #include <ranges>
 #include <unordered_set>
 
+#include "ast_processor.hpp"
+#include "file_buffer.hpp"
+#include "flat_symbol_map.hpp"
+
 extern "C" const TSLanguage* tree_sitter_cpp();
-
-class FileBuffer {
-public:
-    explicit FileBuffer(const std::string& file_path) {
-        std::ifstream file(file_path, std::ios::binary | std::ios::ate);
-        if (!file.is_open()) return;
-
-        const std::streamsize size = file.tellg();
-        if (size <= 0) return;
-
-        file.seekg(0, std::ios::beg);
-        buffer.resize(static_cast<size_t>(size));
-        if (file.read(buffer.data(), size)) {
-            valid = true;
-        }
-    }
-
-    bool is_valid() const { return valid; }
-    const char* data() const { return buffer.data(); }
-    size_t size() const { return buffer.size(); }
-
-private:
-    std::vector<char> buffer;
-    bool valid = false;
-};
 
 ParallelParsingEngine::~ParallelParsingEngine() {
     {
@@ -54,8 +32,9 @@ void ParallelParsingEngine::initialize_workers() {
     if (workers_initialized) return;
     unsigned int thread_count = std::thread::hardware_concurrency();
     if (thread_count == 0) thread_count = 2;
+    worker_pools.resize(thread_count);
     for (unsigned int i = 0; i < thread_count; ++i) {
-        workers.emplace_back(&ParallelParsingEngine::worker_thread_func, this);
+        workers.emplace_back(&ParallelParsingEngine::worker_thread_func, this, i);
     }
     workers_initialized = true;
 }
@@ -94,13 +73,14 @@ void ParallelParsingEngine::execute(const std::vector<std::string>& files_to_par
     }
 }
 
-void ParallelParsingEngine::worker_thread_func() {
+void ParallelParsingEngine::worker_thread_func(int worker_id) {
+    StringPool& local_pool = worker_pools[worker_id];
     TSParser* local_parser = ts_parser_new();
     ts_parser_set_language(local_parser, tree_sitter_cpp());
 
     uint32_t error_offset;
     TSQueryError error_type;
-    const char* query_src =
+    const auto query_src =
         "(call_expression function: (identifier) @target)\n"
         "(call_expression function: (field_expression field: (field_identifier) @target))\n"
         "(call_expression function: (qualified_identifier) @target)";
@@ -132,7 +112,17 @@ void ParallelParsingEngine::worker_thread_func() {
 
             TSTree* syntax_tree = ts_parser_parse_string(local_parser, nullptr, file_buffer.data(), file_buffer.size());
             if (syntax_tree) {
-                process_syntax_tree(syntax_tree, file_path, file_buffer.data(), local_nodes, local_edges, call_query, query_cursor);
+                const uint32_t file_path_offset = local_pool.get_or_add(file_path);
+                ASTProcessor::process_syntax_tree(
+                    syntax_tree,
+                    file_path_offset,
+                    file_buffer.data(),
+                    local_nodes,
+                    local_edges,
+                    call_query,
+                    query_cursor,
+                    local_pool
+                );
                 ts_tree_delete(syntax_tree);
             }
 
@@ -140,6 +130,7 @@ void ParallelParsingEngine::worker_thread_func() {
             {
                 std::lock_guard<std::mutex> lock(map_mutex);
                 FileData data;
+                data.worker_id = worker_id;
                 data.nodes = std::move(local_nodes);
                 data.edges = std::move(local_edges);
                 file_data_map[file_path] = std::move(data);
@@ -160,77 +151,98 @@ void ParallelParsingEngine::worker_thread_func() {
     ts_parser_delete(local_parser);
 }
 
-void ParallelParsingEngine::build_flat_graph() {
-    std::lock_guard<std::mutex> lock(map_mutex);
-    global_nodes.clear();
-    global_edges.clear();
-
-    std::vector<std::pair<std::string, uint32_t>> global_symbols;
-    uint32_t current_id = 0;
-
-    std::vector<std::pair<FileData*, uint32_t>> file_tasks;
+void ParallelParsingEngine::merge_local_graphs(
+    std::vector<std::pair<FileData*, uint32_t>>& file_tasks,
+    uint32_t& current_id,
+    class FlatSymbolMultiMap& flat_symbol_map
+) {
+    std::vector<std::unordered_map<uint32_t, uint32_t>> offset_maps(worker_pools.size());
+    for (size_t wid = 0; wid < worker_pools.size(); ++wid) {
+        for (const auto& [str, local_off] : worker_pools[wid].lookup) {
+            offset_maps[wid][local_off] = global_pool.get_or_add(str);
+        }
+        std::unordered_map<std::string, uint32_t, StringHash, std::equal_to<>>().swap(worker_pools[wid].lookup);
+    }
 
     for (auto& val : file_data_map | std::views::values) {
         auto& data = val;
         file_tasks.emplace_back(&data, current_id);
-        for (const auto& n : data.nodes) {
-            TempNodeRecord updated_node = n;
+        const auto& off_map = offset_maps[data.worker_id];
+
+        for (auto& n : data.nodes) {
+            TempNodeRecord updated_node = std::move(n);
             updated_node.node_id = current_id;
-            if (n.type == NodeType::FUNCTION || n.type == NodeType::CLASS || n.type == NodeType::METHOD) {
-                if (!n.name.empty()) {
-                    global_symbols.emplace_back(n.name, current_id);
-                }
+            updated_node.name_offset = off_map.at(updated_node.name_offset);
+            updated_node.path_offset = off_map.at(updated_node.path_offset);
+            for (auto& scope_off : updated_node.enclosing_scopes) {
+                scope_off = off_map.at(scope_off);
             }
-            global_nodes.push_back(updated_node);
+
+            if (updated_node.type == NodeType::FUNCTION || updated_node.type == NodeType::CLASS ||
+                updated_node.type == NodeType::METHOD) {
+                flat_symbol_map.insert(updated_node.name_offset, current_id);
+            }
+            global_nodes.push_back(std::move(updated_node));
             current_id++;
         }
+        for (auto& e : data.edges) {
+            e.target_symbol_offset = off_map.at(e.target_symbol_offset);
+        }
     }
+}
 
-    std::ranges::sort(global_symbols, [](const auto& a, const auto& b) { return a.first < b.first; });
+void ParallelParsingEngine::resolve_cross_references(
+    const std::vector<std::pair<FileData*, uint32_t>>& file_tasks, class FlatSymbolMultiMap& flat_symbol_map
+) {
+    uint32_t external_path_offset = global_pool.get_or_add("external");
 
-    auto resolve_worker = [this, &global_symbols](FileData* data, const uint32_t local_offset) {
+    auto resolve_worker = [this, &flat_symbol_map, external_path_offset](FileData* data, const uint32_t local_offset) {
         data->resolved_edges.clear();
         data->resolved_external_nodes.clear();
-        for (const auto& [source_node_id, target_symbol, type] : data->edges) {
+        thread_local std::string query_buffer;
+
+        for (const auto& [source_node_id, target_symbol_offset, type] : data->edges) {
             const uint32_t absolute_source_id = source_node_id + local_offset;
             const auto& source_node = global_nodes[absolute_source_id];
 
-            std::vector<std::string> search_scopes;
-            search_scopes.push_back(target_symbol);
-
-            std::string prefix;
-            for (const auto& scope : source_node.enclosing_scopes) {
-                prefix += scope + "::";
-                search_scopes.push_back(prefix + target_symbol);
-            }
-
             bool resolved = false;
-            for (auto& target : std::views::reverse(search_scopes)) {
-                auto [begin_match, end_match] =
-                    std::equal_range(global_symbols.begin(), global_symbols.end(), std::pair<std::string, uint32_t>{target, 0},
-                                     [](const auto& a, const auto& b) { return a.first < b.first; });
 
-                if (begin_match != end_match) {
-                    resolved = true;
-                    const size_t match_count = std::distance(begin_match, end_match);
-                    const EdgeType edge_type = (match_count > 1 && type == EdgeType::CALLS) ? EdgeType::AMBIGUOUS_CALL : type;
+            for (int i = static_cast<int>(source_node.enclosing_scopes.size()); i >= 0; --i) {
+                query_buffer.clear();
+                for (int j = 0; j < i; ++j) {
+                    query_buffer += global_pool.resolve(source_node.enclosing_scopes[j]);
+                    query_buffer += "::";
+                }
+                query_buffer += global_pool.resolve(target_symbol_offset);
 
-                    for (auto match_it = begin_match; match_it != end_match; ++match_it) {
-                        RawEdge new_edge{};
-                        new_edge.source_node_id = absolute_source_id;
-                        new_edge.target_node_id = match_it->second;
-                        new_edge.type = edge_type;
-                        data->resolved_edges.push_back(new_edge);
+                auto lookup_it = global_pool.lookup.find(query_buffer);
+                if (lookup_it != global_pool.lookup.end()) {
+                    const uint32_t fqn_offset = lookup_it->second;
+                    auto matched_nodes = flat_symbol_map.find_all(fqn_offset);
+
+                    if (!matched_nodes.empty()) {
+                        resolved = true;
+                        const size_t match_count = matched_nodes.size();
+                        const EdgeType edge_type =
+                            (match_count > 1 && type == EdgeType::CALLS) ? EdgeType::AMBIGUOUS_CALL : type;
+
+                        for (const uint32_t match_id : matched_nodes) {
+                            RawEdge new_edge{};
+                            new_edge.source_node_id = absolute_source_id;
+                            new_edge.target_node_id = match_id;
+                            new_edge.type = edge_type;
+                            data->resolved_edges.push_back(new_edge);
+                        }
+                        break;
                     }
-                    break;
                 }
             }
 
             if (!resolved) {
                 TempNodeRecord external_node;
                 external_node.node_id = 0;
-                external_node.name = target_symbol;
-                external_node.path = "external";
+                external_node.name_offset = target_symbol_offset;
+                external_node.path_offset = external_path_offset;
                 external_node.start_line = 0;
                 external_node.end_line = 0;
                 external_node.type = NodeType::EXTERNAL;
@@ -264,7 +276,11 @@ void ParallelParsingEngine::build_flat_graph() {
     for (auto& t : resolve_threads) {
         t.join();
     }
+}
 
+void ParallelParsingEngine::finalize_global_structures(
+    std::vector<std::pair<FileData*, uint32_t>>& file_tasks, uint32_t& current_id
+) {
     for (const auto& key : file_tasks | std::views::keys) {
         FileData* data = key;
         for (auto& [edge_index, node] : data->resolved_external_nodes) {
@@ -279,190 +295,46 @@ void ParallelParsingEngine::build_flat_graph() {
             if (a.target_node_id != b.target_node_id) return a.target_node_id < b.target_node_id;
             return a.type < b.type;
         });
-        auto last = std::ranges::unique(data->resolved_edges, [](const RawEdge& a, const RawEdge& b) {
-                        return a.source_node_id == b.source_node_id && a.target_node_id == b.target_node_id && a.type == b.type;
-                    }).begin();
+        auto last =
+            std::ranges::unique(data->resolved_edges, [](const RawEdge& a, const RawEdge& b) {
+                return a.source_node_id == b.source_node_id && a.target_node_id == b.target_node_id && a.type == b.type;
+            }).begin();
         data->resolved_edges.erase(last, data->resolved_edges.end());
+    }
 
+    size_t total_edges = 0;
+    for (const auto& key : file_tasks | std::views::keys) {
+        total_edges += key->resolved_edges.size();
+    }
+    global_edges.reserve(total_edges);
+
+    for (const auto& key : file_tasks | std::views::keys) {
+        FileData* data = key;
         global_edges.insert(global_edges.end(), data->resolved_edges.begin(), data->resolved_edges.end());
     }
+
+    for (auto& val : file_data_map | std::views::values) {
+        std::vector<UnresolvedEdge>().swap(val.edges);
+        std::vector<RawEdge>().swap(val.resolved_edges);
+        std::vector<TempNodeRecord>().swap(val.nodes);
+        std::vector<UnresolvedExternal>().swap(val.resolved_external_nodes);
+    }
 }
 
-static std::string get_node_text(const TSNode& node, const char* source_code) {
-    const uint32_t start = ts_node_start_byte(node);
-    const uint32_t end = ts_node_end_byte(node);
-    if (end > start) {
-        return std::string{source_code + start, end - start};
-    }
-    return "";
-}
+void ParallelParsingEngine::build_flat_graph() {
+    std::lock_guard<std::mutex> lock(map_mutex);
+    global_nodes.clear();
+    global_edges.clear();
 
-static TSNode get_declarator_name(const TSNode& node) {
-    const char* type = ts_node_type(node);
-    if (strcmp(type, "identifier") == 0 || strcmp(type, "field_identifier") == 0 || strcmp(type, "type_identifier") == 0 ||
-        strcmp(type, "qualified_identifier") == 0) {
-        return node;
-    }
-    const uint32_t child_count = ts_node_child_count(node);
-    for (uint32_t i = 0; i < child_count; ++i) {
-        TSNode child = ts_node_child(node, i);
-        const TSNode found = get_declarator_name(child);
-        if (!ts_node_is_null(found)) return found;
-    }
-    constexpr TSNode null_node = {};
-    return null_node;
-}
+    size_t total_nodes = 0;
+    for (const auto& val : file_data_map | std::views::values) total_nodes += val.nodes.size();
+    FlatSymbolMultiMap flat_symbol_map(total_nodes);
+    global_nodes.reserve(total_nodes);
 
-void ParallelParsingEngine::process_syntax_tree(TSTree* tree, const std::string& file_path, const char* source_code,
-                                                std::vector<TempNodeRecord>& local_nodes, std::vector<UnresolvedEdge>& local_edges,
-                                                TSQuery* call_query, TSQueryCursor* query_cursor) {
-    TempNodeRecord file_node{};
-    file_node.node_id = static_cast<uint32_t>(local_nodes.size());
-    file_node.type = NodeType::FILE;
-    file_node.path = file_path;
-    file_node.name = file_path;
-    local_nodes.push_back(file_node);
+    uint32_t current_id = 0;
+    std::vector<std::pair<FileData*, uint32_t>> file_tasks;
 
-    TSNode root = ts_tree_root_node(tree);
-    if (ts_node_is_null(root)) return;
-
-    TSTreeCursor cursor = ts_tree_cursor_new(root);
-    bool reached_root = false;
-
-    struct State {
-        uint32_t node_id;
-        bool pushed_scope;
-        size_t prev_prefix_len;
-    };
-    std::vector<State> state_stack;
-    state_stack.push_back({file_node.node_id, false, 0});
-
-    std::string global_fqn_prefix;
-    std::vector<std::string> global_scopes;
-
-    while (!reached_root) {
-        TSNode current = ts_tree_cursor_current_node(&cursor);
-        const char* type = ts_node_type(current);
-
-        uint32_t current_node_id = state_stack.back().node_id;
-        bool pushed_scope = false;
-        size_t prev_prefix_len = global_fqn_prefix.size();
-
-        if (strcmp(type, "namespace_definition") == 0) {
-            TSNode id_node = ts_node_child_by_field_name(current, "name", 4);
-            if (!ts_node_is_null(id_node)) {
-                std::string ns_name = get_node_text(id_node, source_code);
-                global_fqn_prefix += ns_name + "::";
-                global_scopes.push_back(ns_name);
-                pushed_scope = true;
-            }
-        } else if (strcmp(type, "class_specifier") == 0 || strcmp(type, "struct_specifier") == 0) {
-            TSNode id_node = ts_node_child_by_field_name(current, "name", 4);
-            if (!ts_node_is_null(id_node)) {
-                std::string class_name = get_node_text(id_node, source_code);
-
-                TempNodeRecord class_node;
-                class_node.node_id = static_cast<uint32_t>(local_nodes.size());
-                class_node.name = global_fqn_prefix + class_name;
-                class_node.path = file_path;
-                class_node.start_line = ts_node_start_point(current).row + 1;
-                class_node.end_line = ts_node_end_point(current).row + 1;
-                class_node.type = NodeType::CLASS;
-                class_node.enclosing_scopes = global_scopes;
-
-                current_node_id = class_node.node_id;
-                global_fqn_prefix += class_name + "::";
-                global_scopes.push_back(class_name);
-                pushed_scope = true;
-                local_nodes.push_back(class_node);
-
-                TSNode base_clause = ts_node_child_by_field_name(current, "base_class_clause", 17);
-                if (ts_node_is_null(base_clause)) {
-                    for (uint32_t i = 0; i < ts_node_child_count(current); ++i) {
-                        TSNode child = ts_node_child(current, i);
-                        if (strcmp(ts_node_type(child), "base_class_clause") == 0) {
-                            base_clause = child;
-                            break;
-                        }
-                    }
-                }
-
-                if (!ts_node_is_null(base_clause)) {
-                    uint32_t child_count = ts_node_child_count(base_clause);
-                    for (uint32_t i = 0; i < child_count; ++i) {
-                        TSNode child = ts_node_child(base_clause, i);
-                        TSNode base_id = get_declarator_name(child);
-                        if (!ts_node_is_null(base_id)) {
-                            UnresolvedEdge edge;
-                            edge.source_node_id = class_node.node_id;
-                            edge.target_symbol = get_node_text(base_id, source_code);
-                            edge.type = EdgeType::INHERITS;
-                            local_edges.push_back(edge);
-                        }
-                    }
-                }
-            }
-        } else if (strcmp(type, "function_definition") == 0) {
-            TSNode declarator = ts_node_child_by_field_name(current, "declarator", 10);
-            TSNode id_node = get_declarator_name(declarator);
-            if (!ts_node_is_null(id_node)) {
-                std::string func_name = get_node_text(id_node, source_code);
-
-                TempNodeRecord fn_node;
-                fn_node.node_id = static_cast<uint32_t>(local_nodes.size());
-                fn_node.name = global_fqn_prefix + func_name;
-                fn_node.path = file_path;
-                fn_node.start_line = ts_node_start_point(current).row + 1;
-                fn_node.end_line = ts_node_end_point(current).row + 1;
-                fn_node.type = NodeType::FUNCTION;
-                fn_node.enclosing_scopes = global_scopes;
-
-                current_node_id = fn_node.node_id;
-                local_nodes.push_back(fn_node);
-            }
-        } else if (strcmp(type, "call_expression") == 0) {
-            ts_query_cursor_exec(query_cursor, call_query, current);
-            TSQueryMatch match;
-            if (ts_query_cursor_next_match(query_cursor, &match)) {
-                if (match.capture_count > 0) {
-                    TSNode id_node = match.captures[0].node;
-                    UnresolvedEdge edge;
-                    edge.source_node_id = current_node_id;
-                    edge.target_symbol = get_node_text(id_node, source_code);
-                    edge.type = EdgeType::CALLS;
-                    local_edges.push_back(edge);
-                }
-            }
-        }
-
-        if (ts_tree_cursor_goto_first_child(&cursor)) {
-            state_stack.push_back({current_node_id, pushed_scope, prev_prefix_len});
-            continue;
-        }
-
-        if (pushed_scope) {
-            global_scopes.pop_back();
-            global_fqn_prefix.resize(prev_prefix_len);
-        }
-
-        if (ts_tree_cursor_goto_next_sibling(&cursor)) {
-            continue;
-        }
-
-        do {
-            if (!ts_tree_cursor_goto_parent(&cursor)) {
-                reached_root = true;
-                break;
-            }
-
-            const State& st = state_stack.back();
-            if (st.pushed_scope) {
-                global_scopes.pop_back();
-                global_fqn_prefix.resize(st.prev_prefix_len);
-            }
-            state_stack.pop_back();
-        } while (!ts_tree_cursor_goto_next_sibling(&cursor));
-    }
-
-    ts_tree_cursor_delete(&cursor);
+    merge_local_graphs(file_tasks, current_id, flat_symbol_map);
+    resolve_cross_references(file_tasks, flat_symbol_map);
+    finalize_global_structures(file_tasks, current_id);
 }

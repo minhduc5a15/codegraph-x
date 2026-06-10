@@ -43,6 +43,7 @@ add_executable(codegraph-x
     src/in_memory_graph_engine.cpp 
     src/parser.cpp
     src/parallel_parser.cpp
+    src/ast_processor.cpp
 )
 target_include_directories(codegraph-x PRIVATE src)
 target_link_libraries(codegraph-x PRIVATE tree-sitter tree-sitter-cpp Threads::Threads)
@@ -52,6 +53,7 @@ add_library(codegraph_addon SHARED
     src/binding.cpp 
     src/in_memory_graph_engine.cpp 
     src/parallel_parser.cpp
+    src/ast_processor.cpp
     src/watchdog.cpp
 )
 set_target_properties(codegraph_addon PROPERTIES PREFIX "" SUFFIX ".node")

@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "in_memory_graph_engine.hpp"
+#include "string_pool.hpp"
 
 struct TSTree;
 
@@ -22,28 +23,27 @@ public:
 
     struct TempNodeRecord {
         uint32_t node_id;
-        std::string name;
-        std::string path;
+        uint32_t name_offset;
+        uint32_t path_offset;
         uint32_t start_line;
         uint32_t end_line;
         NodeType type;
-        std::vector<std::string> enclosing_scopes;
+        std::vector<uint32_t> enclosing_scopes;
     };
 
     std::vector<TempNodeRecord> take_nodes() { return std::move(global_nodes); }
     std::vector<RawEdge> take_edges() { return std::move(global_edges); }
+    StringPool take_string_pool() { return std::move(global_pool); }
 
     struct UnresolvedEdge {
         uint32_t source_node_id;
-        std::string target_symbol;
+        uint32_t target_symbol_offset;
         EdgeType type;
     };
 
 private:
     void initialize_workers();
-    void worker_thread_func();
-    static void process_syntax_tree(TSTree* tree, const std::string& file_path, const char* source_code, std::vector<TempNodeRecord>& local_nodes,
-                                    std::vector<UnresolvedEdge>& local_edges, struct TSQuery* call_query, struct TSQueryCursor* query_cursor);
+    void worker_thread_func(int worker_id);
 
     struct UnresolvedExternal {
         size_t edge_index{};
@@ -51,6 +51,7 @@ private:
     };
 
     struct FileData {
+        uint32_t worker_id;
         std::vector<TempNodeRecord> nodes;
         std::vector<UnresolvedEdge> edges;
         std::vector<RawEdge> resolved_edges;
@@ -59,6 +60,17 @@ private:
     std::unordered_map<std::string, FileData> file_data_map;
     std::mutex map_mutex;
 
+    void merge_local_graphs(
+        std::vector<std::pair<FileData*, uint32_t>>& file_tasks,
+        uint32_t& current_id,
+        class FlatSymbolMultiMap& flat_symbol_map
+    );
+    void resolve_cross_references(
+        const std::vector<std::pair<FileData*, uint32_t>>& file_tasks, class FlatSymbolMultiMap& flat_symbol_map
+    );
+    void finalize_global_structures(std::vector<std::pair<FileData*, uint32_t>>& file_tasks, uint32_t& current_id);
+
+    StringPool global_pool;
     std::vector<TempNodeRecord> global_nodes;
     std::vector<RawEdge> global_edges;
 
@@ -67,6 +79,7 @@ private:
     std::condition_variable cv;
     std::condition_variable cv_main;
     std::vector<std::thread> workers;
+    std::vector<StringPool> worker_pools;
     int active_tasks = 0;
     bool stop_workers = false;
     bool workers_initialized = false;

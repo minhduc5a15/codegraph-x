@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <stdexcept>
 #include <string_view>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -30,7 +31,11 @@ struct RawEdge {
     EdgeType type;
 };
 
-#include <unordered_map>
+struct StringHash {
+    using is_transparent = void;
+    [[nodiscard]] size_t operator()(const std::string_view txt) const { return std::hash<std::string_view>{}(txt); }
+    [[nodiscard]] size_t operator()(const std::string& txt) const { return std::hash<std::string>{}(txt); }
+};
 
 class InMemoryGraphEngine {
 private:
@@ -38,12 +43,17 @@ private:
     std::vector<uint32_t> offsets;
     std::vector<EdgeRecord> edges;
     std::vector<char> string_pool;
-    std::unordered_map<std::string, uint32_t> string_lookup;
+    std::unordered_map<std::string, uint32_t, StringHash, std::equal_to<>> string_lookup;
     std::vector<uint32_t> name_index;
+    std::vector<uint32_t> short_name_index;
     std::vector<uint32_t> path_index;
     std::vector<uint32_t> incoming_offsets;
     std::vector<uint32_t> incoming_edges;
     bool is_frozen = false;
+
+    void build_out_degree_and_edges(const std::vector<RawEdge>& raw_edges, uint32_t num_nodes, size_t& dropped_edges);
+    void build_sorted_indices(uint32_t num_nodes);
+    void build_incoming_edges(const std::vector<RawEdge>& raw_edges, uint32_t num_nodes);
 
 public:
     InMemoryGraphEngine() = default;
@@ -54,6 +64,14 @@ public:
     InMemoryGraphEngine& operator=(InMemoryGraphEngine&&) noexcept = default;
 
     void reserve(size_t num_nodes, size_t num_edges, size_t string_capacity);
+
+    void take_string_pool(
+        std::vector<char>&& pool, std::unordered_map<std::string, uint32_t, StringHash, std::equal_to<>>&& lookup
+    ) {
+        string_pool = std::move(pool);
+        string_lookup = std::move(lookup);
+    }
+
     uint32_t register_string(std::string_view str);
     std::string_view resolve_string(uint32_t offset) const;
 
@@ -61,6 +79,7 @@ public:
 
     std::vector<uint32_t> search_substring(std::string_view query, size_t limit = 100) const;
     std::vector<uint32_t> search_path_substring(std::string_view query, size_t limit = 100) const;
+    std::vector<uint32_t> search_fuzzy(std::string_view query, size_t limit = 50) const;
 
     inline std::pair<const EdgeRecord*, size_t> get_adjacent_edges(const uint32_t node_id) const {
         if (!is_frozen || node_id >= nodes.size()) {
@@ -99,6 +118,9 @@ public:
 
     void* get_name_index_data() { return name_index.data(); }
     size_t get_name_index_bytes() const { return name_index.size() * sizeof(uint32_t); }
+
+    void* get_short_name_index_data() { return short_name_index.data(); }
+    size_t get_short_name_index_bytes() const { return short_name_index.size() * sizeof(uint32_t); }
 
     void* get_path_index_data() { return path_index.data(); }
     size_t get_path_index_bytes() const { return path_index.size() * sizeof(uint32_t); }

@@ -1,4 +1,4 @@
-import * as readline from "readline";
+import * as readline from 'readline';
 
 export const SERVER_INSTRUCTIONS = `
 [CODEGRAPH-X PROTOCOL: IN-MEMORY GRAPH ENGINE]
@@ -14,7 +14,7 @@ export class AutoDetectStdioServerTransport {
   onclose?: () => void;
   onerror?: (error: Error) => void;
   onmessage?: (message: any) => void;
-  private mode: "lsp" | "newline" | "unknown" = "unknown";
+  private mode: 'lsp' | 'newline' | 'unknown' = 'unknown';
   private rl?: readline.Interface;
 
   async start() {
@@ -25,15 +25,15 @@ export class AutoDetectStdioServerTransport {
       crlfDelay: Infinity,
     });
 
-    this.rl.on("line", (line) => {
+    this.rl.on('line', (line) => {
       this.processLine(line);
     });
 
-    process.stdin.on("end", () => {
+    process.stdin.on('end', () => {
       this.onclose?.();
     });
 
-    process.stdin.on("error", (e) => {
+    process.stdin.on('error', (e) => {
       this.onerror?.(e);
     });
   }
@@ -41,29 +41,29 @@ export class AutoDetectStdioServerTransport {
   private processLine(line: string) {
     if (!line.trim()) return;
 
-    if (this.mode === "unknown") {
-      if (line.startsWith("Content-Length")) {
-        this.mode = "lsp";
-        console.error("[Transport] Detected LSP mode");
+    if (this.mode === 'unknown') {
+      if (line.startsWith('Content-Length')) {
+        this.mode = 'lsp';
+        console.error('[Transport] Detected LSP mode');
         // For LSP mode over readline, we might have a problem because LSP sends headers then raw json bytes.
         // But since the current implementation is simple, we will assume standard JSON RPC fallback.
-      } else if (line.trimStart().startsWith("{")) {
-        this.mode = "newline";
-        console.error("[Transport] Detected Newline mode");
+      } else if (line.trimStart().startsWith('{')) {
+        this.mode = 'newline';
+        console.error('[Transport] Detected Newline mode');
       }
     }
 
-    if (this.mode === "newline") {
+    if (this.mode === 'newline') {
       try {
         const message = JSON.parse(line);
         this.onmessage?.(message);
       } catch (e) {
         console.error(`[Transport] Parse error: ${e}`);
-        this.onerror?.(new Error("Parse error in Newline mode"));
+        this.onerror?.(new Error('Parse error in Newline mode'));
       }
-    } else if (this.mode === "lsp") {
+    } else if (this.mode === 'lsp') {
       // In a real LSP scenario with readline, this is tricky. We'll attempt parsing if it looks like JSON.
-      if (line.trimStart().startsWith("{")) {
+      if (line.trimStart().startsWith('{')) {
         try {
           const message = JSON.parse(line);
           this.onmessage?.(message);
@@ -86,10 +86,10 @@ export class AutoDetectStdioServerTransport {
       message.result.instructions = SERVER_INSTRUCTIONS;
     }
     const payload = JSON.stringify(message);
-    if (this.mode === "lsp") {
+    if (this.mode === 'lsp') {
       process.stdout.write(`Content-Length: ${Buffer.byteLength(payload, 'utf-8')}\r\n\r\n${payload}`);
     } else {
-      process.stdout.write(payload + "\n");
+      process.stdout.write(payload + '\n');
     }
   }
 }

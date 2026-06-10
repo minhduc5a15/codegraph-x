@@ -4,10 +4,7 @@ import { runInstaller } from './installer/cli';
 
 const program = new Command();
 
-program
-  .name('codegraph-x')
-  .description('Codegraph-X: High performance code graph engine')
-  .version('1.0.0');
+program.name('codegraph-x').description('Codegraph-X: High performance code graph engine').version('1.0.0');
 
 program
   .command('install')

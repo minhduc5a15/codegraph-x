@@ -16895,141 +16895,39 @@
     }
   ],
   "conflicts": [
-    [
-      "type_specifier",
-      "_declarator"
-    ],
-    [
-      "type_specifier",
-      "expression"
-    ],
-    [
-      "sized_type_specifier"
-    ],
-    [
-      "attributed_statement"
-    ],
-    [
-      "_declaration_modifiers",
-      "attributed_statement"
-    ],
-    [
-      "_top_level_item",
-      "_top_level_statement"
-    ],
-    [
-      "_block_item",
-      "statement"
-    ],
-    [
-      "type_qualifier",
-      "extension_expression"
-    ],
-    [
-      "template_function",
-      "template_type"
-    ],
-    [
-      "template_function",
-      "template_type",
-      "expression"
-    ],
-    [
-      "template_function",
-      "template_type",
-      "qualified_identifier"
-    ],
-    [
-      "template_type",
-      "qualified_type_identifier"
-    ],
-    [
-      "qualified_type_identifier",
-      "qualified_identifier"
-    ],
-    [
-      "comma_expression",
-      "initializer_list"
-    ],
-    [
-      "expression",
-      "_declarator"
-    ],
-    [
-      "expression",
-      "structured_binding_declarator"
-    ],
-    [
-      "expression",
-      "_declarator",
-      "type_specifier"
-    ],
-    [
-      "expression",
-      "identifier_parameter_pack_expansion"
-    ],
-    [
-      "expression",
-      "_lambda_capture_identifier"
-    ],
-    [
-      "expression",
-      "_lambda_capture"
-    ],
-    [
-      "expression",
-      "structured_binding_declarator",
-      "_lambda_capture_identifier"
-    ],
-    [
-      "structured_binding_declarator",
-      "_lambda_capture_identifier"
-    ],
-    [
-      "parameter_list",
-      "argument_list"
-    ],
-    [
-      "type_specifier",
-      "call_expression"
-    ],
-    [
-      "_declaration_specifiers",
-      "_constructor_specifiers"
-    ],
-    [
-      "_binary_fold_operator",
-      "_fold_operator"
-    ],
-    [
-      "_function_declarator_seq"
-    ],
-    [
-      "type_specifier",
-      "sized_type_specifier"
-    ],
-    [
-      "initializer_pair",
-      "comma_expression"
-    ],
-    [
-      "expression_statement",
-      "_for_statement_body"
-    ],
-    [
-      "init_statement",
-      "_for_statement_body"
-    ],
-    [
-      "field_expression",
-      "template_method",
-      "template_type"
-    ],
-    [
-      "qualified_field_identifier",
-      "template_method",
-      "template_type"
-    ]
+    ["type_specifier", "_declarator"],
+    ["type_specifier", "expression"],
+    ["sized_type_specifier"],
+    ["attributed_statement"],
+    ["_declaration_modifiers", "attributed_statement"],
+    ["_top_level_item", "_top_level_statement"],
+    ["_block_item", "statement"],
+    ["type_qualifier", "extension_expression"],
+    ["template_function", "template_type"],
+    ["template_function", "template_type", "expression"],
+    ["template_function", "template_type", "qualified_identifier"],
+    ["template_type", "qualified_type_identifier"],
+    ["qualified_type_identifier", "qualified_identifier"],
+    ["comma_expression", "initializer_list"],
+    ["expression", "_declarator"],
+    ["expression", "structured_binding_declarator"],
+    ["expression", "_declarator", "type_specifier"],
+    ["expression", "identifier_parameter_pack_expansion"],
+    ["expression", "_lambda_capture_identifier"],
+    ["expression", "_lambda_capture"],
+    ["expression", "structured_binding_declarator", "_lambda_capture_identifier"],
+    ["structured_binding_declarator", "_lambda_capture_identifier"],
+    ["parameter_list", "argument_list"],
+    ["type_specifier", "call_expression"],
+    ["_declaration_specifiers", "_constructor_specifiers"],
+    ["_binary_fold_operator", "_fold_operator"],
+    ["_function_declarator_seq"],
+    ["type_specifier", "sized_type_specifier"],
+    ["initializer_pair", "comma_expression"],
+    ["expression_statement", "_for_statement_body"],
+    ["init_statement", "_for_statement_body"],
+    ["field_expression", "template_method", "template_type"],
+    ["qualified_field_identifier", "template_method", "template_type"]
   ],
   "precedences": [
     [
@@ -17072,13 +16970,5 @@
     "_expression_not_binary",
     "_namespace_identifier"
   ],
-  "supertypes": [
-    "expression",
-    "statement",
-    "type_specifier",
-    "_declarator",
-    "_field_declarator",
-    "_type_declarator",
-    "_abstract_declarator"
-  ]
+  "supertypes": ["expression", "statement", "type_specifier", "_declarator", "_field_declarator", "_type_declarator", "_abstract_declarator"]
 }

@@ -20,21 +20,19 @@ export const AGENT_CONFIGS: Record<string, AgentConfig> = {
     name: 'Gemini CLI',
     paths: {
       global: () => path.join(os.homedir(), '.gemini', 'settings.json'),
-      local: () => path.join(process.cwd(), '.gemini', 'settings.json')
+      local: () => path.join(process.cwd(), '.gemini', 'settings.json'),
     },
-    mcpKey: 'mcpServers.codegraph-x'
+    mcpKey: 'mcpServers.codegraph-x',
   },
   claude: {
     id: 'claude',
     name: 'Claude Code',
     paths: {
       global: () => path.join(os.homedir(), '.claude.json'),
-      local: () => path.join(process.cwd(), '.mcp.json')
+      local: () => path.join(process.cwd(), '.mcp.json'),
     },
     mcpKey: 'mcpServers.codegraph-x',
     permissionsKey: 'permissions.allow',
-    permissionsRequired: [
-      'mcp__codegraph-x__codegraph_explore'
-    ]
-  }
+    permissionsRequired: ['mcp__codegraph-x__codegraph_explore'],
+  },
 };
