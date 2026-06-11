@@ -11,7 +11,6 @@
 
 #include "ast_processor.hpp"
 #include "file_buffer.hpp"
-#include "flat_symbol_map.hpp"
 
 extern "C" const TSLanguage* tree_sitter_cpp();
 
@@ -42,14 +41,15 @@ void ParallelParsingEngine::initialize_workers() {
 void ParallelParsingEngine::execute(const std::vector<std::string>& files_to_parse) {
     initialize_workers();
 
-    // Remove Stale Data
+    std::unordered_set<std::string> valid_files(files_to_parse.begin(), files_to_parse.end());
     {
         std::lock_guard<std::mutex> lock(map_mutex);
-        const std::unordered_set<std::string> valid_files(files_to_parse.begin(), files_to_parse.end());
         for (auto it = file_data_map.begin(); it != file_data_map.end();) {
             if (!valid_files.contains(it->first)) {
                 it = file_data_map.erase(it);
             } else {
+                it->second.is_parsed_this_run = false;
+                it->second.local_external_nodes.clear(); // We rebuild externals each run
                 ++it;
             }
         }
@@ -59,12 +59,26 @@ void ParallelParsingEngine::execute(const std::vector<std::string>& files_to_par
         std::lock_guard<std::mutex> lock(queue_mutex);
         while (!task_queue.empty()) task_queue.pop();
         for (const auto& file : files_to_parse) {
-            task_queue.push(file);
+            std::error_code ec;
+            auto mtime = std::filesystem::last_write_time(file, ec);
+            if (ec) continue;
+
+            bool skip = false;
+            {
+                std::lock_guard<std::mutex> map_lock(map_mutex);
+                auto it = file_data_map.find(file);
+                if (it != file_data_map.end() && it->second.last_write_time == mtime) {
+                    skip = true;
+                }
+            }
+            if (!skip) {
+                task_queue.push(file);
+            }
         }
-        active_tasks = static_cast<int>(files_to_parse.size());
+        active_tasks = static_cast<int>(task_queue.size());
     }
 
-    if (files_to_parse.empty()) return;
+    if (active_tasks == 0) return;
     cv.notify_all();
 
     {
@@ -105,6 +119,9 @@ void ParallelParsingEngine::worker_thread_func(int worker_id) {
             }
         }
 
+        std::error_code ec;
+        auto mtime = std::filesystem::last_write_time(file_path, ec);
+
         FileBuffer file_buffer(file_path);
         if (file_buffer.is_valid()) {
             std::vector<TempNodeRecord> local_nodes;
@@ -121,7 +138,9 @@ void ParallelParsingEngine::worker_thread_func(int worker_id) {
                     local_edges,
                     call_query,
                     query_cursor,
-                    local_pool
+                    local_pool,
+                    global_scope_interner,
+                    global_pool
                 );
                 ts_tree_delete(syntax_tree);
             }
@@ -131,8 +150,10 @@ void ParallelParsingEngine::worker_thread_func(int worker_id) {
                 std::lock_guard<std::mutex> lock(map_mutex);
                 FileData data;
                 data.worker_id = worker_id;
+                data.last_write_time = mtime;
+                data.is_parsed_this_run = true;
                 data.nodes = std::move(local_nodes);
-                data.edges = std::move(local_edges);
+                data.unresolved_edges = std::move(local_edges);
                 file_data_map[file_path] = std::move(data);
             }
         }
@@ -162,31 +183,35 @@ void ParallelParsingEngine::merge_local_graphs(
             offset_maps[wid][local_off] = global_pool.get_or_add(str);
         }
         std::unordered_map<std::string, uint32_t, StringHash, std::equal_to<>>().swap(worker_pools[wid].lookup);
+        worker_pools[wid].pool.clear();
     }
 
     for (auto& val : file_data_map | std::views::values) {
         auto& data = val;
         file_tasks.emplace_back(&data, current_id);
-        const auto& off_map = offset_maps[data.worker_id];
+
+        if (data.is_parsed_this_run) {
+            const auto& off_map = offset_maps[data.worker_id];
+            for (auto& n : data.nodes) {
+                n.name_offset = off_map.at(n.name_offset);
+                n.path_offset = off_map.at(n.path_offset);
+            }
+            for (auto& e : data.unresolved_edges) {
+                e.target_symbol_offset = off_map.at(e.target_symbol_offset);
+            }
+            data.is_parsed_this_run = false;
+        }
 
         for (auto& n : data.nodes) {
-            TempNodeRecord updated_node = std::move(n);
+            TempNodeRecord updated_node = n;
             updated_node.node_id = current_id;
-            updated_node.name_offset = off_map.at(updated_node.name_offset);
-            updated_node.path_offset = off_map.at(updated_node.path_offset);
-            for (auto& scope_off : updated_node.enclosing_scopes) {
-                scope_off = off_map.at(scope_off);
-            }
-
+            
             if (updated_node.type == NodeType::FUNCTION || updated_node.type == NodeType::CLASS ||
                 updated_node.type == NodeType::METHOD) {
-                flat_symbol_map.insert(updated_node.name_offset, current_id);
+                flat_symbol_map.insert(ScopeLookupKey{updated_node.scope_id, updated_node.name_offset, updated_node.type}, current_id);
             }
             global_nodes.push_back(std::move(updated_node));
             current_id++;
-        }
-        for (auto& e : data.edges) {
-            e.target_symbol_offset = off_map.at(e.target_symbol_offset);
         }
     }
 }
@@ -194,66 +219,39 @@ void ParallelParsingEngine::merge_local_graphs(
 void ParallelParsingEngine::resolve_cross_references(
     const std::vector<std::pair<FileData*, uint32_t>>& file_tasks, class FlatSymbolMultiMap& flat_symbol_map
 ) {
-    uint32_t external_path_offset = global_pool.get_or_add("external");
-
-    auto resolve_worker = [this, &flat_symbol_map, external_path_offset](FileData* data, const uint32_t local_offset) {
-        data->resolved_edges.clear();
-        data->resolved_external_nodes.clear();
-        thread_local std::string query_buffer;
-
-        for (const auto& [source_node_id, target_symbol_offset, type] : data->edges) {
-            const uint32_t absolute_source_id = source_node_id + local_offset;
-            const auto& source_node = global_nodes[absolute_source_id];
-
+    auto resolve_worker = [this, &flat_symbol_map](FileData* data) {
+        if (!data->cached_edges.empty()) return; // Skip if already resolved
+        
+        for (const auto& edge : data->unresolved_edges) {
+            uint32_t current_scope = edge.source_scope_id;
             bool resolved = false;
 
-            for (int i = static_cast<int>(source_node.enclosing_scopes.size()); i >= 0; --i) {
-                query_buffer.clear();
-                for (int j = 0; j < i; ++j) {
-                    query_buffer += global_pool.resolve(source_node.enclosing_scopes[j]);
-                    query_buffer += "::";
+            while (true) {
+                ScopeLookupKey key { current_scope, edge.target_symbol_offset, edge.expected_target_kind };
+                auto matches = flat_symbol_map.find_all(key);
+                
+                if (!matches.empty()) {
+                    CachedResolvedEdge cached_edge{};
+                    cached_edge.source_local_index = edge.source_local_index;
+                    cached_edge.resolved_key = key;
+                    cached_edge.is_external = false;
+                    cached_edge.type = edge.type;
+                    data->cached_edges.push_back(cached_edge);
+                    resolved = true;
+                    break;
                 }
-                query_buffer += global_pool.resolve(target_symbol_offset);
-
-                auto lookup_it = global_pool.lookup.find(query_buffer);
-                if (lookup_it != global_pool.lookup.end()) {
-                    const uint32_t fqn_offset = lookup_it->second;
-                    auto matched_nodes = flat_symbol_map.find_all(fqn_offset);
-
-                    if (!matched_nodes.empty()) {
-                        resolved = true;
-                        const size_t match_count = matched_nodes.size();
-                        const EdgeType edge_type =
-                            (match_count > 1 && type == EdgeType::CALLS) ? EdgeType::AMBIGUOUS_CALL : type;
-
-                        for (const uint32_t match_id : matched_nodes) {
-                            RawEdge new_edge{};
-                            new_edge.source_node_id = absolute_source_id;
-                            new_edge.target_node_id = match_id;
-                            new_edge.type = edge_type;
-                            data->resolved_edges.push_back(new_edge);
-                        }
-                        break;
-                    }
-                }
+                
+                if (current_scope == 0) break;
+                current_scope = global_scope_interner.get_parent(current_scope);
             }
 
             if (!resolved) {
-                TempNodeRecord external_node;
-                external_node.node_id = 0;
-                external_node.name_offset = target_symbol_offset;
-                external_node.path_offset = external_path_offset;
-                external_node.start_line = 0;
-                external_node.end_line = 0;
-                external_node.type = NodeType::EXTERNAL;
-
-                RawEdge new_edge{};
-                new_edge.source_node_id = absolute_source_id;
-                new_edge.target_node_id = 0;
-                new_edge.type = type;
-
-                data->resolved_external_nodes.push_back({data->resolved_edges.size(), external_node});
-                data->resolved_edges.push_back(new_edge);
+                CachedResolvedEdge cached_edge{};
+                cached_edge.source_local_index = edge.source_local_index;
+                cached_edge.resolved_key = ScopeLookupKey{0, edge.target_symbol_offset, NodeType::EXTERNAL};
+                cached_edge.is_external = true;
+                cached_edge.type = edge.type;
+                data->cached_edges.push_back(cached_edge);
             }
         }
     };
@@ -268,7 +266,7 @@ void ParallelParsingEngine::resolve_cross_references(
             while (true) {
                 const size_t idx = task_index.fetch_add(1);
                 if (idx >= file_tasks.size()) break;
-                resolve_worker(file_tasks[idx].first, file_tasks[idx].second);
+                resolve_worker(file_tasks[idx].first);
             }
         });
     }
@@ -279,46 +277,80 @@ void ParallelParsingEngine::resolve_cross_references(
 }
 
 void ParallelParsingEngine::finalize_global_structures(
-    std::vector<std::pair<FileData*, uint32_t>>& file_tasks, uint32_t& current_id
+    std::vector<std::pair<FileData*, uint32_t>>& file_tasks, uint32_t& current_id, class FlatSymbolMultiMap& flat_symbol_map
 ) {
-    for (const auto& key : file_tasks | std::views::keys) {
-        FileData* data = key;
-        for (auto& [edge_index, node] : data->resolved_external_nodes) {
-            const uint32_t new_id = current_id++;
-            node.node_id = new_id;
-            global_nodes.push_back(node);
-            data->resolved_edges[edge_index].target_node_id = new_id;
+    uint32_t external_path_offset = global_pool.get_or_add("external");
+
+    for (const auto& [data, local_offset] : file_tasks) {
+        for (const auto& cached_edge : data->cached_edges) {
+            uint32_t global_source_id = local_offset + cached_edge.source_local_index;
+            
+            if (cached_edge.is_external) {
+                uint32_t target_offset = cached_edge.resolved_key.symbol_offset;
+                uint32_t target_global_id = 0;
+                
+                auto ext_it = data->local_external_nodes.find(target_offset);
+                if (ext_it != data->local_external_nodes.end()) {
+                    target_global_id = ext_it->second;
+                } else {
+                    target_global_id = current_id++;
+                    data->local_external_nodes[target_offset] = target_global_id;
+                    
+                    TempNodeRecord ext_node{};
+                    ext_node.node_id = target_global_id;
+                    ext_node.name_offset = target_offset;
+                    ext_node.path_offset = external_path_offset;
+                    ext_node.start_line = 0;
+                    ext_node.end_line = 0;
+                    ext_node.type = NodeType::EXTERNAL;
+                    ext_node.scope_id = 0;
+                    global_nodes.push_back(ext_node);
+                }
+                global_edges.push_back({global_source_id, target_global_id, cached_edge.type});
+            } else {
+                auto matches = flat_symbol_map.find_all(cached_edge.resolved_key);
+                if (!matches.empty()) {
+                    for (uint32_t match_id : matches) {
+                        EdgeType final_type = (matches.size() > 1 && cached_edge.type == EdgeType::CALLS) ? EdgeType::AMBIGUOUS_CALL : cached_edge.type;
+                        global_edges.push_back({global_source_id, match_id, final_type});
+                    }
+                } else {
+                    // Symbol was deleted! Relink to external.
+                    uint32_t target_offset = cached_edge.resolved_key.symbol_offset;
+                    uint32_t target_global_id = 0;
+                    
+                    auto ext_it = data->local_external_nodes.find(target_offset);
+                    if (ext_it != data->local_external_nodes.end()) {
+                        target_global_id = ext_it->second;
+                    } else {
+                        target_global_id = current_id++;
+                        data->local_external_nodes[target_offset] = target_global_id;
+                        
+                        TempNodeRecord ext_node{};
+                        ext_node.node_id = target_global_id;
+                        ext_node.name_offset = target_offset;
+                        ext_node.path_offset = external_path_offset;
+                        ext_node.start_line = 0;
+                        ext_node.end_line = 0;
+                        ext_node.type = NodeType::EXTERNAL;
+                        ext_node.scope_id = 0;
+                        global_nodes.push_back(ext_node);
+                    }
+                    global_edges.push_back({global_source_id, target_global_id, cached_edge.type});
+                }
+            }
         }
-
-        std::ranges::sort(data->resolved_edges, [](const RawEdge& a, const RawEdge& b) {
-            if (a.source_node_id != b.source_node_id) return a.source_node_id < b.source_node_id;
-            if (a.target_node_id != b.target_node_id) return a.target_node_id < b.target_node_id;
-            return a.type < b.type;
-        });
-        auto last =
-            std::ranges::unique(data->resolved_edges, [](const RawEdge& a, const RawEdge& b) {
-                return a.source_node_id == b.source_node_id && a.target_node_id == b.target_node_id && a.type == b.type;
-            }).begin();
-        data->resolved_edges.erase(last, data->resolved_edges.end());
     }
-
-    size_t total_edges = 0;
-    for (const auto& key : file_tasks | std::views::keys) {
-        total_edges += key->resolved_edges.size();
-    }
-    global_edges.reserve(total_edges);
-
-    for (const auto& key : file_tasks | std::views::keys) {
-        FileData* data = key;
-        global_edges.insert(global_edges.end(), data->resolved_edges.begin(), data->resolved_edges.end());
-    }
-
-    for (auto& val : file_data_map | std::views::values) {
-        std::vector<UnresolvedEdge>().swap(val.edges);
-        std::vector<RawEdge>().swap(val.resolved_edges);
-        std::vector<TempNodeRecord>().swap(val.nodes);
-        std::vector<UnresolvedExternal>().swap(val.resolved_external_nodes);
-    }
+    
+    std::ranges::sort(global_edges, [](const RawEdge& a, const RawEdge& b) {
+        if (a.source_node_id != b.source_node_id) return a.source_node_id < b.source_node_id;
+        if (a.target_node_id != b.target_node_id) return a.target_node_id < b.target_node_id;
+        return a.type < b.type;
+    });
+    auto last = std::ranges::unique(global_edges, [](const RawEdge& a, const RawEdge& b) {
+        return a.source_node_id == b.source_node_id && a.target_node_id == b.target_node_id && a.type == b.type;
+    }).begin();
+    global_edges.erase(last, global_edges.end());
 }
 
 void ParallelParsingEngine::build_flat_graph() {
@@ -329,12 +361,12 @@ void ParallelParsingEngine::build_flat_graph() {
     size_t total_nodes = 0;
     for (const auto& val : file_data_map | std::views::values) total_nodes += val.nodes.size();
     FlatSymbolMultiMap flat_symbol_map(total_nodes);
-    global_nodes.reserve(total_nodes);
+    global_nodes.reserve(total_nodes + 1000); 
 
     uint32_t current_id = 0;
     std::vector<std::pair<FileData*, uint32_t>> file_tasks;
 
     merge_local_graphs(file_tasks, current_id, flat_symbol_map);
     resolve_cross_references(file_tasks, flat_symbol_map);
-    finalize_global_structures(file_tasks, current_id);
+    finalize_global_structures(file_tasks, current_id, flat_symbol_map);
 }

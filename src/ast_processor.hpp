@@ -3,6 +3,7 @@
 #include <vector>
 
 #include "parallel_parser.hpp"
+#include "scope_interner.hpp"
 #include "string_pool.hpp"
 
 struct TSTree;
@@ -19,6 +20,8 @@ public:
         std::vector<ParallelParsingEngine::UnresolvedEdge>& local_edges,
         const TSQuery* call_query,
         TSQueryCursor* query_cursor,
-        StringPool& local_pool
+        StringPool& local_pool,
+        GlobalScopeInterner& global_scope_interner,
+        StringPool& global_pool
     );
 };

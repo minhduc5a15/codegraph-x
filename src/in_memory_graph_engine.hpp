@@ -17,7 +17,8 @@ struct NodeRecord {
     uint32_t start_line;        // offset 12
     uint32_t end_line;          // offset 16
     NodeType type;              // offset 20
-    uint8_t padding[3];         // offset 21 (Natural alignment for 24-byte total size)
+    uint16_t start_column;      // offset 21 (2 bytes)
+    uint8_t flags;              // offset 23 (1 byte)
 };
 
 struct EdgeRecord {
