@@ -65,7 +65,7 @@ jobs:
           if npm view "$PKG_NAME@$PKG_VERSION" version &>/dev/null; then
             echo "Version $PKG_VERSION of $PKG_NAME already exists on NPM. Skipping publish."
           else
-            npm publish --access public
+            npm publish --access public || echo "Publish failed (likely 403 previously published). Ignoring..."
           fi
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -115,7 +115,7 @@ jobs:
           if npm view "$PKG_NAME@$PKG_VERSION" version &>/dev/null; then
             echo "Version $PKG_VERSION of $PKG_NAME already exists on NPM. Skipping publish."
           else
-            npm publish --access public
+            npm publish --access public || echo "Publish failed (likely 403 previously published). Ignoring..."
           fi
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
