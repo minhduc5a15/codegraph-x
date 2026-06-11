@@ -46,7 +46,8 @@ protected:
             nr.start_line = tn.start_line;
             nr.end_line = tn.end_line;
             nr.type = tn.type;
-            std::memset(nr.padding, 0, sizeof(nr.padding));
+            nr.start_column = tn.start_column;
+            nr.flags = tn.flags;
             raw_nodes.push_back(nr);
         }
 

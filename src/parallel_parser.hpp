@@ -31,6 +31,8 @@ public:
         uint32_t start_line;
         uint32_t end_line;
         NodeType type;
+        uint16_t start_column;
+        uint8_t flags;
         uint32_t scope_id;
     };
 

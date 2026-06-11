@@ -303,6 +303,8 @@ void ParallelParsingEngine::finalize_global_structures(
                     ext_node.start_line = 0;
                     ext_node.end_line = 0;
                     ext_node.type = NodeType::EXTERNAL;
+                    ext_node.start_column = 0;
+                    ext_node.flags = 0;
                     ext_node.scope_id = 0;
                     global_nodes.push_back(ext_node);
                 }
@@ -333,6 +335,8 @@ void ParallelParsingEngine::finalize_global_structures(
                         ext_node.start_line = 0;
                         ext_node.end_line = 0;
                         ext_node.type = NodeType::EXTERNAL;
+                        ext_node.start_column = 0;
+                        ext_node.flags = 0;
                         ext_node.scope_id = 0;
                         global_nodes.push_back(ext_node);
                     }

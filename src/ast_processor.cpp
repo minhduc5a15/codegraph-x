@@ -74,6 +74,8 @@ static inline void handle_class_specifier(
         class_node.start_line = ts_node_start_point(current).row + 1;
         class_node.end_line = ts_node_end_point(current).row + 1;
         class_node.type = NodeType::CLASS;
+        class_node.start_column = ts_node_start_point(current).column;
+        class_node.flags = 0;
         class_node.scope_id = current_scope;
 
         current_node_id = class_node.node_id;
@@ -132,6 +134,8 @@ static inline void handle_function_definition(
         fn_node.start_line = ts_node_start_point(current).row + 1;
         fn_node.end_line = ts_node_end_point(current).row + 1;
         fn_node.type = NodeType::FUNCTION;
+        fn_node.start_column = ts_node_start_point(current).column;
+        fn_node.flags = 0;
         fn_node.scope_id = current_scope;
 
         current_node_id = fn_node.node_id;
@@ -180,6 +184,8 @@ void ASTProcessor::process_syntax_tree(
     ParallelParsingEngine::TempNodeRecord file_node{};
     file_node.node_id = static_cast<uint32_t>(local_nodes.size());
     file_node.type = NodeType::FILE;
+    file_node.start_column = 0;
+    file_node.flags = 0;
     file_node.path_offset = file_path_offset;
     file_node.name_offset = file_path_offset;
     file_node.scope_id = 0;
