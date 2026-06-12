@@ -17,8 +17,8 @@ struct NodeRecord {
     uint32_t start_line;        // offset 12
     uint32_t end_line;          // offset 16
     NodeType type;              // offset 20
-    uint16_t start_column;      // offset 21 (2 bytes)
-    uint8_t flags;              // offset 23 (1 byte)
+    uint8_t flags;              // offset 21 (1 byte)
+    uint16_t start_column;      // offset 22 (2 bytes)
 };
 
 struct EdgeRecord {

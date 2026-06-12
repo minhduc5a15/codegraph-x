@@ -12,9 +12,14 @@
 #include "ast_processor.hpp"
 #include "file_buffer.hpp"
 
-extern "C" const TSLanguage* tree_sitter_cpp();
+#include <stdexcept>
 
 ParallelParsingEngine::~ParallelParsingEngine() {
+    for (auto& [ext, entry] : language_registry) {
+        if (entry.query) {
+            ts_query_delete(entry.query);
+        }
+    }
     {
         std::lock_guard<std::mutex> lock(queue_mutex);
         stop_workers = true;
@@ -25,6 +30,16 @@ ParallelParsingEngine::~ParallelParsingEngine() {
             worker.join();
         }
     }
+}
+
+void ParallelParsingEngine::register_language(const std::string& ext, const TSLanguage* language, const std::string& query_string, bool file_scoped, const UnwrapConfig& unwrap_config) {
+    uint32_t error_offset;
+    TSQueryError error_type;
+    TSQuery* query = ts_query_new(language, query_string.c_str(), query_string.size(), &error_offset, &error_type);
+    if (!query) {
+        throw std::runtime_error("Failed to compile tree-sitter query for extension " + ext + " at offset " + std::to_string(error_offset));
+    }
+    language_registry[ext] = {language, query, file_scoped, unwrap_config};
 }
 
 void ParallelParsingEngine::initialize_workers() {
@@ -90,15 +105,6 @@ void ParallelParsingEngine::execute(const std::vector<std::string>& files_to_par
 void ParallelParsingEngine::worker_thread_func(int worker_id) {
     StringPool& local_pool = worker_pools[worker_id];
     TSParser* local_parser = ts_parser_new();
-    ts_parser_set_language(local_parser, tree_sitter_cpp());
-
-    uint32_t error_offset;
-    TSQueryError error_type;
-    const auto query_src =
-        "(call_expression function: (identifier) @target)\n"
-        "(call_expression function: (field_expression field: (field_identifier) @target))\n"
-        "(call_expression function: (qualified_identifier) @target)";
-    TSQuery* call_query = ts_query_new(tree_sitter_cpp(), query_src, strlen(query_src), &error_offset, &error_type);
     TSQueryCursor* query_cursor = ts_query_cursor_new();
 
     while (true) {
@@ -122,6 +128,38 @@ void ParallelParsingEngine::worker_thread_func(int worker_id) {
         std::error_code ec;
         auto mtime = std::filesystem::last_write_time(file_path, ec);
 
+        std::filesystem::path path(file_path);
+        std::string ext = path.extension().string();
+
+        const TSLanguage* lang = nullptr;
+        TSQuery* query = nullptr;
+        bool file_scoped = false;
+        UnwrapConfig unwrap_config;
+
+        {
+            // Thread-safe read without lock since registry is immutable during execution
+            auto it = language_registry.find(ext);
+            if (it != language_registry.end()) {
+                lang = it->second.language;
+                query = it->second.query;
+                file_scoped = it->second.file_scoped;
+                unwrap_config = it->second.unwrap_config;
+            }
+        }
+
+        if (!lang) {
+            {
+                std::lock_guard<std::mutex> lock(queue_mutex);
+                active_tasks--;
+                if (active_tasks == 0) {
+                    cv_main.notify_all();
+                }
+            }
+            continue;
+        }
+
+        ts_parser_set_language(local_parser, lang);
+
         FileBuffer file_buffer(file_path);
         if (file_buffer.is_valid()) {
             std::vector<TempNodeRecord> local_nodes;
@@ -133,11 +171,14 @@ void ParallelParsingEngine::worker_thread_func(int worker_id) {
                 ASTProcessor::process_syntax_tree(
                     syntax_tree,
                     file_path_offset,
+                    file_path,
                     file_buffer.data(),
                     local_nodes,
                     local_edges,
-                    call_query,
+                    query,
                     query_cursor,
+                    file_scoped,
+                    unwrap_config,
                     local_pool,
                     global_scope_interner,
                     global_pool
@@ -168,7 +209,6 @@ void ParallelParsingEngine::worker_thread_func(int worker_id) {
     }
 
     ts_query_cursor_delete(query_cursor);
-    ts_query_delete(call_query);
     ts_parser_delete(local_parser);
 }
 

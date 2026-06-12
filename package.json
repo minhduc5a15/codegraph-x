@@ -1,7 +1,7 @@
 {
   "name": "@codegraph-x/core",
-  "version": "1.2.3",
-  "description": "A high-performance code graph analysis tool using C++ and Tree-sitter.",
+  "version": "1.4.0",
+  "description": "High-performance code graph engine for AI agents",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
@@ -15,9 +15,9 @@
   ],
   "scripts": {
     "build:ts": "tsc",
-    "build:cpp": "cmake -B build -S . && cmake --build build",
+    "build:cpp": "cmake -B build -S . && cmake --build build --target codegraph-x",
     "build:addon": "cmake-js compile -T codegraph_addon",
-    "build": "npm run build:ts && npm run build:cpp",
+    "build": "npm run build:ts && npm run build:cpp && npm run build:addon",
     "start": "node dist/index.js",
     "test": "echo \"Error: no test specified\" && exit 1",
     "mcp": "node dist/mcp_server.js",
@@ -35,6 +35,11 @@
     "commander": "^15.0.0",
     "ignore": "^7.0.5",
     "node-addon-api": "^8.0.0",
+    "tree-sitter": "^0.21.1",
+    "tree-sitter-cpp": "^0.23.4",
+    "tree-sitter-javascript": "^0.23.1",
+    "tree-sitter-python": "^0.23.2",
+    "tree-sitter-typescript": "^0.23.2",
     "ws": "^8.21.0"
   },
   "devDependencies": {

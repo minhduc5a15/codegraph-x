@@ -13,7 +13,16 @@
 #include "string_pool.hpp"
 #include "scope_interner.hpp"
 #include "flat_symbol_map.hpp"
+#include <unordered_set>
 
+struct UnwrapConfig {
+    std::unordered_set<std::string> skip_types;
+    std::unordered_set<std::string> accept_types;
+};
+
+typedef struct TSLanguage TSLanguage;
+typedef struct TSQuery TSQuery;
+typedef struct TSQueryCursor TSQueryCursor;
 struct TSTree;
 
 class ParallelParsingEngine {
@@ -24,6 +33,8 @@ public:
     void execute(const std::vector<std::string>& files_to_parse);
     void build_flat_graph();
 
+    void register_language(const std::string& ext, const TSLanguage* language, const std::string& query_string, bool file_scoped, const UnwrapConfig& unwrap_config);
+
     struct TempNodeRecord {
         uint32_t node_id;
         uint32_t name_offset;
@@ -31,8 +42,8 @@ public:
         uint32_t start_line;
         uint32_t end_line;
         NodeType type;
-        uint16_t start_column;
         uint8_t flags;
+        uint16_t start_column;
         uint32_t scope_id;
     };
 
@@ -56,6 +67,14 @@ public:
     };
 
 private:
+    struct LanguageRegistryEntry {
+        const TSLanguage* language;
+        TSQuery* query;
+        bool file_scoped;
+        UnwrapConfig unwrap_config;
+    };
+    std::unordered_map<std::string, LanguageRegistryEntry> language_registry;
+
     void initialize_workers();
     void worker_thread_func(int worker_id);
 

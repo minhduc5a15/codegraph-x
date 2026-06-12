@@ -41,7 +41,8 @@ Traditional code search (`grep`, `ripgrep`, `SearchText`) finds *text*. Codegrap
 │  │  │  • Strings: zero-copy string_pool    │  │      │
 │  │  │  • Search: zero-alloc fuzzy scoring  │  │      │
 │  │  └──────────────────────────────────────┘  │      │
-│  │  ParallelParsingEngine (Tree-sitter)       │      │
+│  │  ParallelParsingEngine                     │      │
+│  │  (Tree-sitter API sourced from npm)        │      │
 │  └────────────────────────────────────────────┘      │
 └──────────────────────────────────────────────────────┘
 ```

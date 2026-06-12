@@ -18,21 +18,21 @@ find_package(Threads REQUIRED)
 execute_process(COMMAND node -e "process.stdout.write(require('node-addon-api').include)" OUTPUT_VARIABLE NODE_ADDON_API_DIR)
 string(REPLACE "\"" "" NODE_ADDON_API_DIR ${NODE_ADDON_API_DIR})
 
-# --- Vendored Tree-Sitter ---
+# --- Tree-Sitter (from npm) ---
 
 # Tree-Sitter core (Amalgamated build)
-add_library(tree-sitter STATIC vendor/tree-sitter/lib/src/lib.c)
+add_library(tree-sitter STATIC node_modules/tree-sitter/vendor/tree-sitter/lib/src/lib.c)
 set_target_properties(tree-sitter PROPERTIES POSITION_INDEPENDENT_CODE ON)
-target_include_directories(tree-sitter PUBLIC vendor/tree-sitter/lib/include)
-target_include_directories(tree-sitter PRIVATE vendor/tree-sitter/lib/src)
+target_include_directories(tree-sitter PUBLIC node_modules/tree-sitter/vendor/tree-sitter/lib/include)
+target_include_directories(tree-sitter PRIVATE node_modules/tree-sitter/vendor/tree-sitter/lib/src)
 
-# Tree-Sitter CPP grammar
+# Tree-Sitter CPP grammar (for standalone CLI only)
 add_library(tree-sitter-cpp STATIC 
-    vendor/tree-sitter-cpp/src/parser.c
-    vendor/tree-sitter-cpp/src/scanner.c
+    node_modules/tree-sitter-cpp/src/parser.c
+    node_modules/tree-sitter-cpp/src/scanner.c
 )
 set_target_properties(tree-sitter-cpp PROPERTIES POSITION_INDEPENDENT_CODE ON)
-target_include_directories(tree-sitter-cpp PUBLIC vendor/tree-sitter-cpp/src)
+target_include_directories(tree-sitter-cpp PUBLIC node_modules/tree-sitter-cpp/src)
 target_link_libraries(tree-sitter-cpp PRIVATE tree-sitter)
 
 # --- Targets ---
@@ -58,7 +58,7 @@ add_library(codegraph_addon SHARED
 )
 set_target_properties(codegraph_addon PROPERTIES PREFIX "" SUFFIX ".node")
 target_include_directories(codegraph_addon PRIVATE src ${NODE_ADDON_API_DIR} ${CMAKE_JS_INC})
-target_link_libraries(codegraph_addon PRIVATE tree-sitter tree-sitter-cpp Threads::Threads ${CMAKE_JS_LIB})
+target_link_libraries(codegraph_addon PRIVATE tree-sitter Threads::Threads ${CMAKE_JS_LIB})
 target_compile_definitions(codegraph_addon PRIVATE NAPI_DISABLE_CPP_EXCEPTIONS)
 
 # Benchmark executable

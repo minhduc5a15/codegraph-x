@@ -1,4 +1,5 @@
 #include <napi.h>
+#include <tree_sitter/api.h>
 
 #include <cstring>
 #include <memory>
@@ -11,6 +12,68 @@
 
 std::shared_ptr<ParallelParsingEngine> global_parser = nullptr;
 std::shared_ptr<InMemoryGraphEngine> global_engine = nullptr;
+
+std::vector<Napi::ObjectReference> language_refs;
+
+Napi::Value RegisterLanguage(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    if (!global_parser) {
+        global_parser = std::make_shared<ParallelParsingEngine>();
+    }
+
+    if (info.Length() < 5) {
+        Napi::TypeError::New(env, "Expected 5 arguments: ext, lang_val, query, file_scoped, unwrap_config").ThrowAsJavaScriptException();
+        return env.Null();
+    }
+
+    std::string ext = info[0].As<Napi::String>().Utf8Value();
+    Napi::Value lang_val = info[1];
+    std::string query = info[2].As<Napi::String>().Utf8Value();
+    bool file_scoped = info[3].As<Napi::Boolean>().Value();
+
+    UnwrapConfig unwrap_config;
+    if (info[4].IsObject()) {
+        Napi::Object config_obj = info[4].As<Napi::Object>();
+        if (config_obj.Has("skipTypes")) {
+            Napi::Array skip_arr = config_obj.Get("skipTypes").As<Napi::Array>();
+            for (uint32_t i = 0; i < skip_arr.Length(); ++i) {
+                unwrap_config.skip_types.insert(skip_arr.Get(i).As<Napi::String>().Utf8Value());
+            }
+        }
+        if (config_obj.Has("acceptTypes")) {
+            Napi::Array accept_arr = config_obj.Get("acceptTypes").As<Napi::Array>();
+            for (uint32_t i = 0; i < accept_arr.Length(); ++i) {
+                unwrap_config.accept_types.insert(accept_arr.Get(i).As<Napi::String>().Utf8Value());
+            }
+        }
+    }
+
+    const TSLanguage* lang_ptr = nullptr;
+    if (lang_val.IsExternal()) {
+        lang_ptr = static_cast<const TSLanguage*>(lang_val.As<Napi::External<void>>().Data());
+    } else if (lang_val.IsObject()) {
+        Napi::Object lang_obj = lang_val.As<Napi::Object>();
+        language_refs.push_back(Napi::Persistent(lang_obj));
+        if (lang_obj.Has("language")) {
+            Napi::Value inner = lang_obj.Get("language");
+            if (inner.IsExternal()) {
+                lang_ptr = static_cast<const TSLanguage*>(inner.As<Napi::External<void>>().Data());
+            }
+        }
+    }
+
+    if (!lang_ptr) {
+        Napi::TypeError::New(env, "Invalid TSLanguage pointer or object").ThrowAsJavaScriptException();
+        return env.Null();
+    }
+
+    try {
+        global_parser->register_language(ext, lang_ptr, query, file_scoped, unwrap_config);
+    } catch (const std::exception& e) {
+        Napi::Error::New(env, e.what()).ThrowAsJavaScriptException();
+    }
+    return env.Undefined();
+}
 
 class UpdateWorkspaceWorker : public Napi::AsyncWorker {
 public:
@@ -186,6 +249,7 @@ Napi::Value SearchFuzzy(const Napi::CallbackInfo& info) {
 }
 
 Napi::Object InitAll(Napi::Env env, Napi::Object exports) {
+    exports.Set(Napi::String::New(env, "RegisterLanguage"), Napi::Function::New(env, RegisterLanguage));
     exports.Set(Napi::String::New(env, "UpdateWorkspace"), Napi::Function::New(env, UpdateWorkspace));
     exports.Set(Napi::String::New(env, "SetupWatchdog"), Napi::Function::New(env, SetupWatchdog));
     exports.Set(Napi::String::New(env, "SearchSubstring"), Napi::Function::New(env, SearchSubstring));
