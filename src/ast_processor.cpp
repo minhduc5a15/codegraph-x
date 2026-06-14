@@ -1,9 +1,8 @@
 #include "ast_processor.hpp"
 
 #include <tree_sitter/api.h>
-#include <cstring>
+
 #include <string>
-#include <iostream>
 
 static std::string get_node_text(const TSNode& node, const char* source_code) {
     const uint32_t start = ts_node_start_byte(node);
@@ -20,7 +19,7 @@ static TSNode resolve_identifier_node(const TSNode& node, const UnwrapConfig& co
 
     std::vector<TSNode> queue = {node};
     while (!queue.empty()) {
-        TSNode current = queue.front();
+        const TSNode current = queue.front();
         queue.erase(queue.begin());
 
         const char* type = ts_node_type(current);
@@ -37,7 +36,7 @@ static TSNode resolve_identifier_node(const TSNode& node, const UnwrapConfig& co
             }
         }
     }
-    return node; // Fallback to the original node if no identifier found
+    return node;  // Fallback to the original node if no identifier found
 }
 
 struct ScopeState {
@@ -86,7 +85,7 @@ void ASTProcessor::process_syntax_tree(
 
     ts_query_cursor_exec(query_cursor, query, root);
     TSQueryMatch match;
-    
+
     while (ts_query_cursor_next_match(query_cursor, &match)) {
         TSNode def_node = {0};
         TSNode name_node = {0};
@@ -109,7 +108,7 @@ void ASTProcessor::process_syntax_tree(
                 name_node = match.captures[i].node;
             }
         }
-        
+
         TSNode main_node = !ts_node_is_null(def_node) ? def_node : (!ts_node_is_null(ref_node) ? ref_node : name_node);
         if (ts_node_is_null(main_node)) continue;
 
@@ -122,13 +121,14 @@ void ASTProcessor::process_syntax_tree(
         uint32_t current_parent_id = scope_stack.back().parent_node_id;
 
         if (!def_type.empty() && !ts_node_is_null(name_node)) {
-            std::string name_str = get_node_text(name_node, source_code);
-            
+            TSNode real_name_node = resolve_identifier_node(name_node, unwrap_config);
+            std::string name_str = get_node_text(real_name_node, source_code);
+
             if (def_type == "namespace") {
                 uint32_t new_scope = global_scope_interner.get_or_create_scope(current_scope, name_str, global_pool);
                 scope_stack.push_back({ts_node_end_byte(def_node), new_scope, current_parent_id});
             } else {
-                NodeType ntype = NodeType::CLASS;
+                auto ntype = NodeType::CLASS;
                 if (def_type == "function") ntype = NodeType::FUNCTION;
                 if (def_type == "method") ntype = NodeType::METHOD;
                 if (def_type == "class" || def_type == "struct") ntype = NodeType::CLASS;
@@ -147,7 +147,8 @@ void ASTProcessor::process_syntax_tree(
                 local_nodes.push_back(node_rec);
 
                 if (ntype == NodeType::CLASS) {
-                    uint32_t new_scope = global_scope_interner.get_or_create_scope(current_scope, name_str, global_pool);
+                    uint32_t new_scope =
+                        global_scope_interner.get_or_create_scope(current_scope, name_str, global_pool);
                     scope_stack.push_back({ts_node_end_byte(def_node), new_scope, node_rec.node_id});
                 } else if (ntype == NodeType::FUNCTION || ntype == NodeType::METHOD) {
                     scope_stack.push_back({ts_node_end_byte(def_node), current_scope, node_rec.node_id});
@@ -162,7 +163,7 @@ void ASTProcessor::process_syntax_tree(
             edge.source_local_index = current_parent_id;
             edge.source_scope_id = current_scope;
             edge.target_symbol_offset = local_pool.get_or_add(name_str);
-            
+
             if (ref_type == "call") {
                 edge.expected_target_kind = NodeType::FUNCTION;
                 edge.type = EdgeType::CALLS;

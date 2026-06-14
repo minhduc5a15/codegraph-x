@@ -1,6 +1,6 @@
 {
   "name": "@codegraph-x/core",
-  "version": "1.4.2",
+  "version": "1.4.3",
   "description": "High-performance code graph engine for AI agents",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

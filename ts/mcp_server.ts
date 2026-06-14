@@ -12,103 +12,108 @@ import { formatXRayResult } from './services/formatter.js';
 
 async function main() {
   if (process.argv.includes('--help') || process.argv.includes('-h')) {
-    console.error('Usage: codegraph-mcp [workspace_directory]');
+    console.error('Usage: codegraph-mcp');
     process.exit(0);
-  }
-
-  const targetDir = process.argv[2] || process.cwd();
-  if (!fs.existsSync(targetDir) || !fs.statSync(targetDir).isDirectory()) {
-    console.error(`[Error] Invalid directory: ${targetDir}`);
-    process.exit(1);
-  }
-
-  const hash = crypto.createHash('md5').update(targetDir).digest('hex');
-  const socketPath = process.platform === 'win32' ? `\\\\.\\pipe\\codegraph-x-${hash}` : `/tmp/codegraph-x-${hash}.sock`;
-
-  let clientSocket: net.Socket | null = null;
-
-  const tryConnect = () =>
-    new Promise<net.Socket>((resolve, reject) => {
-      const socket = net.createConnection(socketPath);
-
-      const onConnect = () => {
-        cleanup();
-        resolve(socket);
-      };
-
-      const onError = (err: Error) => {
-        cleanup();
-        socket.destroy();
-        reject(err);
-      };
-
-      const cleanup = () => {
-        socket.off('connect', onConnect);
-        socket.off('error', onError);
-      };
-
-      socket.on('connect', onConnect);
-      socket.on('error', onError);
-    });
-
-  try {
-    clientSocket = await tryConnect();
-  } catch (e) {
-    // Spawn daemon if not running
-    const daemonScript = path.join(__dirname, 'daemon.js');
-    const child = spawn(process.execPath, [daemonScript, targetDir, socketPath], {
-      stdio: 'ignore',
-    });
-    child.unref();
-
-    // Wait for daemon to be ready
-    for (let i = 0; i < 50; i++) {
-      await new Promise((r) => setTimeout(r, 100));
-      try {
-        clientSocket = await tryConnect();
-        break;
-      } catch (err) {}
-    }
-  }
-
-  if (!clientSocket) {
-    console.error('Failed to connect to Codegraph-X Daemon.');
-    process.exit(1);
   }
 
   // IPC Client logic
   let reqId = 0;
   const pendingRequests = new Map<number, { resolve: (res: any) => void; reject: (err: any) => void }>();
+  const daemons = new Map<string, net.Socket>();
 
-  const rl = readline.createInterface({
-    input: clientSocket,
-    terminal: false,
-    historySize: 0,
-    crlfDelay: Infinity,
-  });
+  async function getDaemonClient(targetDir: string): Promise<net.Socket> {
+    if (daemons.has(targetDir)) return daemons.get(targetDir)!;
 
-  rl.on('line', (line) => {
-    if (!line.trim()) return;
-    try {
-      const msg = JSON.parse(line);
-      if (msg.id !== undefined && pendingRequests.has(msg.id)) {
-        if (msg.error) {
-          pendingRequests.get(msg.id)!.reject(new Error(msg.error));
-        } else {
-          pendingRequests.get(msg.id)!.resolve(msg.result);
-        }
-        pendingRequests.delete(msg.id);
-      }
-    } catch (err) {
-      console.error('[IPC] Failed to parse JSON line:', err);
+    if (!fs.existsSync(targetDir) || !fs.statSync(targetDir).isDirectory()) {
+      throw new Error(`[Error] Invalid directory: ${targetDir}`);
     }
-  });
 
-  const rpcCall = (action: string, params: any): Promise<any> => {
+    const hash = crypto.createHash('md5').update(targetDir).digest('hex');
+    const socketPath = process.platform === 'win32' ? `\\\\.\\pipe\\codegraph-x-${hash}` : `/tmp/codegraph-x-${hash}.sock`;
+
+    const tryConnect = () =>
+      new Promise<net.Socket>((resolve, reject) => {
+        const socket = net.createConnection(socketPath);
+
+        const onConnect = () => {
+          cleanup();
+          resolve(socket);
+        };
+
+        const onError = (err: Error) => {
+          cleanup();
+          socket.destroy();
+          reject(err);
+        };
+
+        const cleanup = () => {
+          socket.off('connect', onConnect);
+          socket.off('error', onError);
+        };
+
+        socket.on('connect', onConnect);
+        socket.on('error', onError);
+      });
+
+    let clientSocket: net.Socket | null = null;
+    try {
+      clientSocket = await tryConnect();
+    } catch (e) {
+      // Spawn daemon if not running
+      const daemonScript = path.join(__dirname, 'daemon.js');
+      const child = spawn(process.execPath, [daemonScript, targetDir, socketPath], {
+        stdio: 'ignore',
+      });
+      child.unref();
+
+      // Wait for daemon to be ready
+      for (let i = 0; i < 50; i++) {
+        await new Promise((r) => setTimeout(r, 100));
+        try {
+          clientSocket = await tryConnect();
+          break;
+        } catch (err) {}
+      }
+    }
+
+    if (!clientSocket) {
+      throw new Error(`Failed to connect to Codegraph-X Daemon for ${targetDir}.`);
+    }
+
+    const rl = readline.createInterface({
+      input: clientSocket,
+      terminal: false,
+      historySize: 0,
+      crlfDelay: Infinity,
+    });
+
+    rl.on('line', (line) => {
+      if (!line.trim()) return;
+      try {
+        const msg = JSON.parse(line);
+        if (msg.id !== undefined && pendingRequests.has(msg.id)) {
+          if (msg.error) {
+            pendingRequests.get(msg.id)!.reject(new Error(msg.error));
+          } else {
+            pendingRequests.get(msg.id)!.resolve(msg.result);
+          }
+          pendingRequests.delete(msg.id);
+        }
+      } catch (err) {
+        console.error('[IPC] Failed to parse JSON line:', err);
+      }
+    });
+
+    daemons.set(targetDir, clientSocket);
+    return clientSocket;
+  }
+
+  const rpcCall = async (targetDir: string, action: string, params: any): Promise<any> => {
+    const socket = await getDaemonClient(targetDir);
     return new Promise((resolve, reject) => {
       const id = ++reqId;
       pendingRequests.set(id, { resolve, reject });
-      clientSocket!.write(JSON.stringify({ id, action, ...params }) + '\n');
+      socket.write(JSON.stringify({ id, action, ...params }) + '\n');
     });
   };
 
@@ -131,8 +136,12 @@ async function main() {
               type: 'string',
               description: "Symbol names, file names, or a natural language question (e.g. 'worker queue mutex', 'How does the secure allocator work?')",
             },
+            directory: {
+              type: 'string',
+              description: 'The absolute path to the workspace/project directory to scan. MUST be provided.',
+            }
           },
-          required: ['query'],
+          required: ['query', 'directory'],
         },
       },
       {
@@ -145,8 +154,12 @@ async function main() {
               type: 'number',
               description: 'The integer ID of the node to read, obtained from cx_xray_scan results.',
             },
+            directory: {
+              type: 'string',
+              description: 'The absolute path to the workspace/project directory. MUST be provided.',
+            }
           },
-          required: ['node_id'],
+          required: ['node_id', 'directory'],
         },
       },
     ],
@@ -157,11 +170,13 @@ async function main() {
     try {
       if (name === 'explore_codebase' || name === 'cx_xray_scan') {
         const query = typeof args?.query === 'string' ? args.query : '';
+        const directory = typeof args?.directory === 'string' ? args.directory : '';
         if (!query.trim()) throw new Error('Invalid query parameter');
+        if (!directory.trim()) throw new Error('Invalid directory parameter. You must provide the absolute path to the project.');
 
-        const nodes: any[] = await rpcCall('explore_flow', { query });
-
-        const outputText = await formatXRayResult(nodes, process.cwd());
+        const nodes: any[] = await rpcCall(directory, 'explore_flow', { query });
+        fs.writeFileSync('/tmp/codegraph_debug.json', JSON.stringify(nodes, null, 2));
+        const outputText = await formatXRayResult(nodes, directory);
 
         return {
           content: [{ type: 'text', text: outputText }],
@@ -169,9 +184,11 @@ async function main() {
       } else if (name === 'read_node' || name === 'cx_read_node') {
         const parsedId = Number(args?.node_id);
         const node_id = !isNaN(parsedId) ? parsedId : -1;
+        const directory = typeof args?.directory === 'string' ? args.directory : '';
         if (node_id < 0) throw new Error('Invalid node_id parameter');
+        if (!directory.trim()) throw new Error('Invalid directory parameter. You must provide the absolute path to the project.');
 
-        const outputText = await rpcCall('read_node', { node_id });
+        const outputText = await rpcCall(directory, 'read_node', { node_id });
         return {
           content: [{ type: 'text', text: outputText }],
         };
@@ -187,11 +204,13 @@ async function main() {
 
   const transport = new AutoDetectStdioServerTransport();
   await server.connect(transport as any);
-  console.error(`Codegraph-X MCP Client running on stdio (Connected to daemon ${socketPath})`);
+  console.error(`Codegraph-X MCP Client running on stdio (Lazy daemon initialization enabled)`);
 
   const shutdown = async () => {
     await server.close();
-    clientSocket?.end();
+    for (const socket of daemons.values()) {
+      socket.end();
+    }
     process.exit(0);
   };
 

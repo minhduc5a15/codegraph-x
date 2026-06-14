@@ -52,7 +52,8 @@ async function main() {
             collectSourceFiles(fullPath, fileList);
           } else {
             const ext = path.extname(file);
-            if (ext === '.cpp' || ext === '.hpp' || ext === '.c' || ext === '.h') {
+            const supportedExts = ['.cpp', '.hpp', '.c', '.h', '.cc', '.cxx', '.py', '.ts', '.tsx', '.js', '.jsx'];
+            if (supportedExts.includes(ext)) {
               fileList.push(fullPath);
             }
           }
@@ -66,6 +67,7 @@ async function main() {
     return fileList;
   }
 
+  let graphPromise: Promise<Codegraph> | null = null;
   let graph: Codegraph | null = null;
 
   const MAX_BUFFER_SIZE = 50 * 1024 * 1024; // 50MB
@@ -90,6 +92,11 @@ async function main() {
         let req: any = null;
         try {
           req = JSON.parse(line);
+          
+          if (graphPromise && !graph) {
+            graph = await graphPromise;
+          }
+          
           let result = null;
           if (graph) {
             if (req.action === 'explore_flow') {
@@ -129,18 +136,28 @@ async function main() {
 
     // 3. Initial parse
     let allFiles = collectSourceFiles(targetDir);
-    graph = await updateWorkspace(allFiles);
+    graphPromise = updateWorkspace(allFiles);
+    graphPromise.then((g) => {
+      graph = g;
+    });
 
     // 4. Incremental Sync (Debounced File Watcher)
     let debounceTimer: NodeJS.Timeout | null = null;
     try {
       fs.watch(targetDir, { recursive: true }, (_eventType, filename) => {
-        if (filename && (filename.endsWith('.cpp') || filename.endsWith('.hpp') || filename.endsWith('.c') || filename.endsWith('.h'))) {
-          if (debounceTimer) clearTimeout(debounceTimer);
-          debounceTimer = setTimeout(async () => {
+        if (filename) {
+          const ext = path.extname(filename);
+          const supportedExts = ['.cpp', '.hpp', '.c', '.h', '.cc', '.cxx', '.py', '.ts', '.tsx', '.js', '.jsx'];
+          if (supportedExts.includes(ext)) {
+            if (debounceTimer) clearTimeout(debounceTimer);
+          debounceTimer = setTimeout(() => {
             allFiles = collectSourceFiles(targetDir);
-            graph = await updateWorkspace(allFiles);
+            graphPromise = updateWorkspace(allFiles);
+            graphPromise.then((g) => {
+              graph = g;
+            });
           }, 100);
+          }
         }
       });
     } catch (e) {

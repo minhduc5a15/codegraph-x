@@ -31,6 +31,7 @@ export function registerCppLanguage() {
     addon.RegisterLanguage(".h", cppModule, queryStr, false, cppConfig);
     addon.RegisterLanguage(".cc", cppModule, queryStr, false, cppConfig);
     addon.RegisterLanguage(".cxx", cppModule, queryStr, false, cppConfig);
+    addon.RegisterLanguage(".c", cppModule, queryStr, false, cppConfig);
 }
 
 export function registerTypeScriptLanguage() {
